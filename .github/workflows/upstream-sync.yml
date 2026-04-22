@@ -117,14 +117,14 @@ jobs:
           echo "[OK] Conflicts auto-resolved; proceeding to build gate."
 
       - name: Set up Go
-        if: steps.check.outputs.has_changes == 'true' && steps.merge.outputs.conflicts == 'false'
+        if: steps.check.outputs.has_changes == 'true'
         uses: actions/setup-go@v5
         with:
           go-version: '>=1.26.0'
           cache: true
 
       - name: Build gate
-        if: steps.check.outputs.has_changes == 'true' && steps.merge.outputs.conflicts == 'false'
+        if: steps.check.outputs.has_changes == 'true'
         id: build
         continue-on-error: true
         run: |
@@ -139,7 +139,7 @@ jobs:
           set -e
 
       - name: Test gate
-        if: steps.check.outputs.has_changes == 'true' && steps.merge.outputs.conflicts == 'false' && steps.build.outputs.passed == 'true'
+        if: steps.check.outputs.has_changes == 'true' && steps.build.outputs.passed == 'true'
         id: test
         continue-on-error: true
         run: |
@@ -157,7 +157,7 @@ jobs:
         if: steps.check.outputs.has_changes == 'true'
         run: git push origin "${{ steps.branch.outputs.name }}"
 
-      - name: Fast-forward main (clean merge + build + test pass, no force-pr)
+      - name: Fast-forward main (clean merge + build + test pass, no conflicts, no force-pr)
         if: |
           steps.check.outputs.has_changes == 'true' &&
           steps.merge.outputs.conflicts == 'false' &&
@@ -187,12 +187,19 @@ jobs:
           [ "${{ steps.test.outputs.passed }}" = "false" ] && STATUS="${STATUS}- [!] \`go test\` FAILED\n"
           [ -z "${STATUS}" ] && STATUS="- [OK] Clean merge + gates green (force_pr requested)\n"
           BODY=$(printf "## Upstream sync: \`router-for-me/CLIProxyAPI\` → \`main\`\n\nCommits being synced: \`${{ steps.check.outputs.merge_base }}..${{ steps.check.outputs.upstream_head }}\`\n\n### Gate status\n%b\n### What to do\n1. Review the diff — especially \`cmd/server/main.go\`, \`go.mod\`, \`go.sum\`.\n2. Plus-only provider dirs are protected by \`.gitattributes merge=ours\`.\n3. Re-run failing gates locally: \`go build ./... && go test ./...\`.\n4. Merge when green.\n" "${STATUS}")
+          set +e
           PR_URL=$(gh pr create \
             --base main \
             --head "${{ steps.branch.outputs.name }}" \
             --title "chore(upstream-sync): $(date -u +%Y-%m-%d) pull from router-for-me/CLIProxyAPI" \
             --body "${BODY}" 2>&1)
+          PR_EXIT=$?
+          set -e
           echo "$PR_URL"
+          if [ $PR_EXIT -ne 0 ]; then
+            echo "[!] gh pr create exited $PR_EXIT — check log above."
+            exit $PR_EXIT
+          fi
           # Add label after create; tolerate label add failures (don't fail the job)
           PR_NUM=$(echo "$PR_URL" | grep -oE '/pull/[0-9]+' | grep -oE '[0-9]+$' || true)
           if [ -n "$PR_NUM" ]; then
