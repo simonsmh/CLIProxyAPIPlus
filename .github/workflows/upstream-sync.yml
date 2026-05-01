@@ -372,6 +372,7 @@ jobs:
               --repo "${{ github.repository }}" \
               --title "${ISSUE_TITLE}" \
               --label "${TRACKING_ISSUE_LABEL}" \
+              --assignee "${{ github.repository_owner }}" \
               --body "${ISSUE_BODY}" || exit 1
           fi
           set -e
