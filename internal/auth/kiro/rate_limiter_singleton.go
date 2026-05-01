@@ -10,17 +10,55 @@ import (
 var (
 	globalRateLimiter     *RateLimiter
 	globalRateLimiterOnce sync.Once
+	globalRateLimiterCfg  *RateLimiterConfig
 
 	globalCooldownManager     *CooldownManager
 	globalCooldownManagerOnce sync.Once
 	cooldownStopCh            chan struct{}
 )
 
+// SetGlobalRateLimiterConfig sets the configuration for the global rate limiter.
+// If the singleton already exists, it is updated in place.
+func SetGlobalRateLimiterConfig(cfg *RateLimiterConfig) {
+	globalRateLimiterCfg = cfg
+	if globalRateLimiter == nil {
+		return
+	}
+
+	if cfg != nil {
+		globalRateLimiter.ApplyConfig(*cfg)
+	} else {
+		globalRateLimiter.ApplyConfig(RateLimiterConfig{})
+	}
+
+	status := "enabled"
+	if !globalRateLimiter.enabled {
+		status = "disabled"
+	}
+	source := "defaults"
+	if cfg != nil {
+		source = "custom config"
+	}
+	log.Infof("kiro: global RateLimiter reconfigured (%s) with %s", status, source)
+}
+
 // GetGlobalRateLimiter returns the singleton RateLimiter instance.
 func GetGlobalRateLimiter() *RateLimiter {
 	globalRateLimiterOnce.Do(func() {
-		globalRateLimiter = NewRateLimiter()
-		log.Info("kiro: global RateLimiter initialized")
+		if globalRateLimiterCfg != nil {
+			globalRateLimiter = NewRateLimiterWithConfig(*globalRateLimiterCfg)
+		} else {
+			globalRateLimiter = NewRateLimiter()
+		}
+		status := "enabled"
+		if !globalRateLimiter.enabled {
+			status = "disabled"
+		}
+		source := "defaults"
+		if globalRateLimiterCfg != nil {
+			source = "custom config"
+		}
+		log.Infof("kiro: global RateLimiter initialized (%s) with %s", status, source)
 	})
 	return globalRateLimiter
 }

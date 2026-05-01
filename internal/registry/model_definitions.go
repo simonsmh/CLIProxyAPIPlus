@@ -727,7 +727,7 @@ func GetKiroModels() []*ModelInfo {
 			MaxCompletionTokens: 64000,
 			Thinking:            &ThinkingSupport{Min: 1024, Max: 32000, ZeroAllowed: true, DynamicAllowed: true},
 		},
-		// --- 第三方模型 (通过 Kiro 接入) ---
+		// --- Third-party models routed through Kiro ---
 		{
 			ID:                  "kiro-deepseek-3-2",
 			Object:              "model",
