@@ -42,7 +42,10 @@ func TestGeminiExecutorRecordsSuccessfulZeroUsageInStatistics(t *testing.T) {
 	})
 
 	model, source := executeGeminiZeroUsage(t, "stats")
-	detail := waitForStatisticsDetail(t, "gemini", model, source)
+	detail := waitForStatisticsDetail(t, "gemini", model)
+	if detail.Source == source {
+		t.Fatalf("detail source leaked raw account identifier")
+	}
 	if detail.Failed {
 		t.Fatalf("detail failed = true, want false")
 	}
@@ -121,7 +124,7 @@ func waitForQueuedUsageModelTotalTokens(t *testing.T, wantProvider, wantModel st
 	t.Fatalf("timed out waiting for queued usage payload for provider=%q model=%q", wantProvider, wantModel)
 }
 
-func waitForStatisticsDetail(t *testing.T, apiName, model, source string) internalusage.RequestDetail {
+func waitForStatisticsDetail(t *testing.T, apiName, model string) internalusage.RequestDetail {
 	t.Helper()
 
 	deadline := time.Now().Add(2 * time.Second)
@@ -138,14 +141,14 @@ func waitForStatisticsDetail(t *testing.T, apiName, model, source string) intern
 			continue
 		}
 		for _, detail := range modelSnapshot.Details {
-			if detail.Source == source {
+			if detail.Source != "" {
 				return detail
 			}
 		}
 		time.Sleep(10 * time.Millisecond)
 	}
 
-	t.Fatalf("timed out waiting for statistics detail for api=%q model=%q source=%q", apiName, model, source)
+	t.Fatalf("timed out waiting for statistics detail for api=%q model=%q", apiName, model)
 	return internalusage.RequestDetail{}
 }
 
