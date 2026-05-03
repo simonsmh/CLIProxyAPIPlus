@@ -5,17 +5,29 @@ package usage
 
 import (
 	"context"
+	"crypto/sha256"
+	"encoding/hex"
 	"fmt"
+	"strconv"
 	"strings"
 	"sync"
 	"sync/atomic"
 	"time"
 
-	"github.com/gin-gonic/gin"
+	internallogging "github.com/router-for-me/CLIProxyAPI/v6/internal/logging"
 	coreusage "github.com/router-for-me/CLIProxyAPI/v6/sdk/cliproxy/usage"
 )
 
 var statisticsEnabled atomic.Bool
+
+const (
+	maxTrackedAPIs            = 1024
+	maxModelsPerAPI           = 256
+	maxRequestDetailsPerModel = 1000
+	maxUsageIdentifierRunes   = 160
+	overflowUsageBucket       = "other"
+	unknownUsageBucket        = "unknown"
+)
 
 func init() {
 	statisticsEnabled.Store(true)
@@ -77,6 +89,7 @@ type RequestStatistics struct {
 type apiStats struct {
 	TotalRequests int64
 	TotalTokens   int64
+	FailureCount  int64
 	Models        map[string]*modelStats
 }
 
@@ -84,6 +97,7 @@ type apiStats struct {
 type modelStats struct {
 	TotalRequests int64
 	TotalTokens   int64
+	FailureCount  int64
 	Details       []RequestDetail
 }
 
@@ -125,6 +139,7 @@ type StatisticsSnapshot struct {
 type APISnapshot struct {
 	TotalRequests int64                    `json:"total_requests"`
 	TotalTokens   int64                    `json:"total_tokens"`
+	FailureCount  int64                    `json:"failure_count"`
 	Models        map[string]ModelSnapshot `json:"models"`
 }
 
@@ -132,6 +147,7 @@ type APISnapshot struct {
 type ModelSnapshot struct {
 	TotalRequests int64           `json:"total_requests"`
 	TotalTokens   int64           `json:"total_tokens"`
+	FailureCount  int64           `json:"failure_count"`
 	Details       []RequestDetail `json:"details"`
 }
 
@@ -165,10 +181,11 @@ func (s *RequestStatistics) Record(ctx context.Context, record coreusage.Record)
 	}
 	detail := normaliseDetail(record.Detail)
 	totalTokens := detail.TotalTokens
-	statsKey := record.APIKey
+	statsKey := secretUsageBucket(record.APIKey)
 	if statsKey == "" {
 		statsKey = resolveAPIIdentifier(ctx, record)
 	}
+	statsKey = normaliseUsageIdentifier(statsKey)
 	failed := record.Failed
 	if !failed {
 		failed = !resolveSuccess(ctx)
@@ -176,8 +193,9 @@ func (s *RequestStatistics) Record(ctx context.Context, record coreusage.Record)
 	success := !failed
 	modelName := record.Model
 	if modelName == "" {
-		modelName = "unknown"
+		modelName = unknownUsageBucket
 	}
+	modelName = normaliseUsageIdentifier(modelName)
 	dayKey := timestamp.Format("2006-01-02")
 	hourKey := timestamp.Hour()
 
@@ -192,11 +210,7 @@ func (s *RequestStatistics) Record(ctx context.Context, record coreusage.Record)
 	}
 	s.totalTokens += totalTokens
 
-	stats, ok := s.apis[statsKey]
-	if !ok {
-		stats = &apiStats{Models: make(map[string]*modelStats)}
-		s.apis[statsKey] = stats
-	}
+	stats := s.apiStatsForKey(statsKey)
 	s.updateAPIStats(stats, modelName, RequestDetail{
 		Timestamp: timestamp,
 		LatencyMs: normaliseLatency(record.Latency),
@@ -212,9 +226,41 @@ func (s *RequestStatistics) Record(ctx context.Context, record coreusage.Record)
 	s.tokensByHour[hourKey] += totalTokens
 }
 
+func (s *RequestStatistics) apiStatsForKey(key string) *apiStats {
+	key = normaliseUsageIdentifier(key)
+	if stats, ok := s.apis[key]; ok && stats != nil {
+		if stats.Models == nil {
+			stats.Models = make(map[string]*modelStats)
+		}
+		return stats
+	}
+	if key != overflowUsageBucket && len(s.apis) >= maxTrackedAPIs-1 {
+		key = overflowUsageBucket
+		if stats, ok := s.apis[key]; ok && stats != nil {
+			if stats.Models == nil {
+				stats.Models = make(map[string]*modelStats)
+			}
+			return stats
+		}
+	}
+	stats := &apiStats{Models: make(map[string]*modelStats)}
+	s.apis[key] = stats
+	return stats
+}
+
 func (s *RequestStatistics) updateAPIStats(stats *apiStats, model string, detail RequestDetail) {
+	if stats == nil {
+		return
+	}
+	if stats.Models == nil {
+		stats.Models = make(map[string]*modelStats)
+	}
 	stats.TotalRequests++
 	stats.TotalTokens += detail.Tokens.TotalTokens
+	if detail.Failed {
+		stats.FailureCount++
+	}
+	model = modelBucketName(stats, model)
 	modelStatsValue, ok := stats.Models[model]
 	if !ok {
 		modelStatsValue = &modelStats{}
@@ -222,7 +268,27 @@ func (s *RequestStatistics) updateAPIStats(stats *apiStats, model string, detail
 	}
 	modelStatsValue.TotalRequests++
 	modelStatsValue.TotalTokens += detail.Tokens.TotalTokens
+	if detail.Failed {
+		modelStatsValue.FailureCount++
+	}
 	modelStatsValue.Details = append(modelStatsValue.Details, detail)
+	if len(modelStatsValue.Details) > maxRequestDetailsPerModel {
+		modelStatsValue.Details = modelStatsValue.Details[len(modelStatsValue.Details)-maxRequestDetailsPerModel:]
+	}
+}
+
+func modelBucketName(stats *apiStats, model string) string {
+	model = normaliseUsageIdentifier(model)
+	if stats == nil || stats.Models == nil {
+		return model
+	}
+	if _, ok := stats.Models[model]; ok {
+		return model
+	}
+	if model != overflowUsageBucket && len(stats.Models) >= maxModelsPerAPI-1 {
+		return overflowUsageBucket
+	}
+	return model
 }
 
 // Snapshot returns a copy of the aggregated metrics for external consumption.
@@ -245,6 +311,7 @@ func (s *RequestStatistics) Snapshot() StatisticsSnapshot {
 		apiSnapshot := APISnapshot{
 			TotalRequests: stats.TotalRequests,
 			TotalTokens:   stats.TotalTokens,
+			FailureCount:  stats.FailureCount,
 			Models:        make(map[string]ModelSnapshot, len(stats.Models)),
 		}
 		for modelName, modelStatsValue := range stats.Models {
@@ -253,6 +320,7 @@ func (s *RequestStatistics) Snapshot() StatisticsSnapshot {
 			apiSnapshot.Models[modelName] = ModelSnapshot{
 				TotalRequests: modelStatsValue.TotalRequests,
 				TotalTokens:   modelStatsValue.TotalTokens,
+				FailureCount:  modelStatsValue.FailureCount,
 				Details:       requestDetails,
 			}
 		}
@@ -289,150 +357,148 @@ type MergeResult struct {
 	Skipped int64 `json:"skipped"`
 }
 
-// MergeSnapshot merges an exported statistics snapshot into the current store.
-// Existing data is preserved and duplicate request details are skipped.
-func (s *RequestStatistics) MergeSnapshot(snapshot StatisticsSnapshot) MergeResult {
+// RestoreSnapshot replaces the current store with an exported statistics snapshot.
+func (s *RequestStatistics) RestoreSnapshot(snapshot StatisticsSnapshot) MergeResult {
 	result := MergeResult{}
 	if s == nil {
 		return result
 	}
 
+	next := NewRequestStatistics()
+	next.loadSnapshot(snapshot)
+	restored := next.Snapshot()
+
 	s.mu.Lock()
 	defer s.mu.Unlock()
 
-	seen := make(map[string]struct{})
-	for apiName, stats := range s.apis {
-		if stats == nil {
-			continue
-		}
-		for modelName, modelStatsValue := range stats.Models {
-			if modelStatsValue == nil {
-				continue
-			}
-			for _, detail := range modelStatsValue.Details {
-				seen[dedupKey(apiName, modelName, detail)] = struct{}{}
-			}
-		}
-	}
-
-	for apiName, apiSnapshot := range snapshot.APIs {
-		apiName = strings.TrimSpace(apiName)
-		if apiName == "" {
-			continue
-		}
-		stats, ok := s.apis[apiName]
-		if !ok || stats == nil {
-			stats = &apiStats{Models: make(map[string]*modelStats)}
-			s.apis[apiName] = stats
-		} else if stats.Models == nil {
-			stats.Models = make(map[string]*modelStats)
-		}
-		for modelName, modelSnapshot := range apiSnapshot.Models {
-			modelName = strings.TrimSpace(modelName)
-			if modelName == "" {
-				modelName = "unknown"
-			}
-			for _, detail := range modelSnapshot.Details {
-				detail.Tokens = normaliseTokenStats(detail.Tokens)
-				if detail.LatencyMs < 0 {
-					detail.LatencyMs = 0
-				}
-				if detail.Timestamp.IsZero() {
-					detail.Timestamp = time.Now()
-				}
-				key := dedupKey(apiName, modelName, detail)
-				if _, exists := seen[key]; exists {
-					result.Skipped++
-					continue
-				}
-				seen[key] = struct{}{}
-				s.recordImported(apiName, modelName, stats, detail)
-				result.Added++
-			}
-		}
-	}
-
+	s.totalRequests = restored.TotalRequests
+	s.successCount = restored.SuccessCount
+	s.failureCount = restored.FailureCount
+	s.totalTokens = restored.TotalTokens
+	s.apis = next.apis
+	s.requestsByDay = next.requestsByDay
+	s.requestsByHour = next.requestsByHour
+	s.tokensByDay = next.tokensByDay
+	s.tokensByHour = next.tokensByHour
+	result.Added = restored.TotalRequests
 	return result
 }
 
-func (s *RequestStatistics) recordImported(apiName, modelName string, stats *apiStats, detail RequestDetail) {
-	totalTokens := detail.Tokens.TotalTokens
-	if totalTokens < 0 {
-		totalTokens = 0
+func (s *RequestStatistics) loadSnapshot(snapshot StatisticsSnapshot) {
+	for apiName, apiSnapshot := range snapshot.APIs {
+		stats := s.apiStatsForKey(apiName)
+		var apiRequests int64
+		var apiTokens int64
+		var apiFailures int64
+
+		for modelName, modelSnapshot := range apiSnapshot.Models {
+			modelName = modelBucketName(stats, modelName)
+			modelStatsValue, ok := stats.Models[modelName]
+			if !ok || modelStatsValue == nil {
+				modelStatsValue = &modelStats{}
+				stats.Models[modelName] = modelStatsValue
+			}
+
+			details, detailTotals := normaliseRequestDetails(modelSnapshot.Details)
+			modelRequests := maxInt64(nonNegativeInt64(modelSnapshot.TotalRequests), detailTotals.requests)
+			modelTokens := maxInt64(nonNegativeInt64(modelSnapshot.TotalTokens), detailTotals.tokens)
+			modelFailures := maxInt64(nonNegativeInt64(modelSnapshot.FailureCount), detailTotals.failures)
+
+			modelStatsValue.TotalRequests += modelRequests
+			modelStatsValue.TotalTokens += modelTokens
+			modelStatsValue.FailureCount += modelFailures
+			modelStatsValue.Details = append(modelStatsValue.Details, details...)
+			if len(modelStatsValue.Details) > maxRequestDetailsPerModel {
+				modelStatsValue.Details = modelStatsValue.Details[len(modelStatsValue.Details)-maxRequestDetailsPerModel:]
+			}
+
+			apiRequests += modelRequests
+			apiTokens += modelTokens
+			apiFailures += modelFailures
+		}
+		stats.TotalRequests += maxInt64(nonNegativeInt64(apiSnapshot.TotalRequests), apiRequests)
+		stats.TotalTokens += maxInt64(nonNegativeInt64(apiSnapshot.TotalTokens), apiTokens)
+		stats.FailureCount += maxInt64(nonNegativeInt64(apiSnapshot.FailureCount), apiFailures)
 	}
 
-	s.totalRequests++
-	if detail.Failed {
-		s.failureCount++
-	} else {
-		s.successCount++
-	}
-	s.totalTokens += totalTokens
-
-	s.updateAPIStats(stats, modelName, detail)
-
-	dayKey := detail.Timestamp.Format("2006-01-02")
-	hourKey := detail.Timestamp.Hour()
-
-	s.requestsByDay[dayKey]++
-	s.requestsByHour[hourKey]++
-	s.tokensByDay[dayKey] += totalTokens
-	s.tokensByHour[hourKey] += totalTokens
+	s.copySnapshotTimeMaps(snapshot)
+	s.rebuildRootTotals(snapshot)
 }
 
-func dedupKey(apiName, modelName string, detail RequestDetail) string {
-	timestamp := detail.Timestamp.UTC().Format(time.RFC3339Nano)
-	tokens := normaliseTokenStats(detail.Tokens)
-	return fmt.Sprintf(
-		"%s|%s|%s|%s|%s|%t|%d|%d|%d|%d|%d",
-		apiName,
-		modelName,
-		timestamp,
-		detail.Source,
-		detail.AuthIndex,
-		detail.Failed,
-		tokens.InputTokens,
-		tokens.OutputTokens,
-		tokens.ReasoningTokens,
-		tokens.CachedTokens,
-		tokens.TotalTokens,
-	)
+type detailAggregate struct {
+	requests int64
+	tokens   int64
+	failures int64
+}
+
+func normaliseRequestDetails(details []RequestDetail) ([]RequestDetail, detailAggregate) {
+	if len(details) > maxRequestDetailsPerModel {
+		details = details[len(details)-maxRequestDetailsPerModel:]
+	}
+	now := time.Now()
+	out := make([]RequestDetail, 0, len(details))
+	var totals detailAggregate
+	for _, detail := range details {
+		detail.Tokens = normaliseTokenStats(detail.Tokens)
+		if detail.Tokens.TotalTokens < 0 {
+			detail.Tokens.TotalTokens = 0
+		}
+		if detail.LatencyMs < 0 {
+			detail.LatencyMs = 0
+		}
+		if detail.Timestamp.IsZero() {
+			detail.Timestamp = now
+		}
+		out = append(out, detail)
+		totals.requests++
+		totals.tokens += detail.Tokens.TotalTokens
+		if detail.Failed {
+			totals.failures++
+		}
+	}
+	return out, totals
+}
+
+func (s *RequestStatistics) copySnapshotTimeMaps(snapshot StatisticsSnapshot) {
+	s.requestsByDay = copyStringInt64Map(snapshot.RequestsByDay)
+	s.tokensByDay = copyStringInt64Map(snapshot.TokensByDay)
+	s.requestsByHour = copyHourInt64Map(snapshot.RequestsByHour)
+	s.tokensByHour = copyHourInt64Map(snapshot.TokensByHour)
+}
+
+func (s *RequestStatistics) rebuildRootTotals(snapshot StatisticsSnapshot) {
+	var requests int64
+	var tokens int64
+	var failures int64
+	for _, stats := range s.apis {
+		if stats == nil {
+			continue
+		}
+		requests += stats.TotalRequests
+		tokens += stats.TotalTokens
+		failures += stats.FailureCount
+	}
+	s.totalRequests = maxInt64(nonNegativeInt64(snapshot.TotalRequests), requests)
+	s.failureCount = maxInt64(nonNegativeInt64(snapshot.FailureCount), failures)
+	s.totalTokens = maxInt64(nonNegativeInt64(snapshot.TotalTokens), tokens)
+	s.successCount = maxInt64(nonNegativeInt64(snapshot.SuccessCount), s.totalRequests-s.failureCount)
+	if s.successCount+s.failureCount > s.totalRequests {
+		s.totalRequests = s.successCount + s.failureCount
+	}
 }
 
 func resolveAPIIdentifier(ctx context.Context, record coreusage.Record) string {
-	if ctx != nil {
-		if ginCtx, ok := ctx.Value("gin").(*gin.Context); ok && ginCtx != nil {
-			path := ginCtx.FullPath()
-			if path == "" && ginCtx.Request != nil {
-				path = ginCtx.Request.URL.Path
-			}
-			method := ""
-			if ginCtx.Request != nil {
-				method = ginCtx.Request.Method
-			}
-			if path != "" {
-				if method != "" {
-					return method + " " + path
-				}
-				return path
-			}
-		}
+	if endpoint := strings.TrimSpace(internallogging.GetEndpoint(ctx)); endpoint != "" {
+		return endpoint
 	}
-	if record.Provider != "" {
-		return record.Provider
+	if provider := strings.TrimSpace(record.Provider); provider != "" {
+		return provider
 	}
-	return "unknown"
+	return unknownUsageBucket
 }
 
 func resolveSuccess(ctx context.Context) bool {
-	if ctx == nil {
-		return true
-	}
-	ginCtx, ok := ctx.Value("gin").(*gin.Context)
-	if !ok || ginCtx == nil {
-		return true
-	}
-	status := ginCtx.Writer.Status()
+	status := internallogging.GetResponseStatus(ctx)
 	if status == 0 {
 		return true
 	}
@@ -481,4 +547,71 @@ func formatHour(hour int) string {
 	}
 	hour = hour % 24
 	return fmt.Sprintf("%02d", hour)
+}
+
+func normaliseUsageIdentifier(value string) string {
+	value = strings.TrimSpace(value)
+	if value == "" {
+		return unknownUsageBucket
+	}
+	return trimRunes(value, maxUsageIdentifierRunes)
+}
+
+func secretUsageBucket(value string) string {
+	value = strings.TrimSpace(value)
+	if value == "" {
+		return ""
+	}
+	sum := sha256.Sum256([]byte(value))
+	hash := hex.EncodeToString(sum[:])[:8]
+	return fmt.Sprintf("api-key:%s", hash)
+}
+
+func trimRunes(value string, maxRunes int) string {
+	if maxRunes <= 0 {
+		return ""
+	}
+	runes := []rune(value)
+	if len(runes) <= maxRunes {
+		return value
+	}
+	return string(runes[:maxRunes])
+}
+
+func maxInt64(a, b int64) int64 {
+	if b > a {
+		return b
+	}
+	return a
+}
+
+func nonNegativeInt64(value int64) int64 {
+	if value < 0 {
+		return 0
+	}
+	return value
+}
+
+func copyStringInt64Map(source map[string]int64) map[string]int64 {
+	out := make(map[string]int64, len(source))
+	for key, value := range source {
+		out[key] = nonNegativeInt64(value)
+	}
+	return out
+}
+
+func copyHourInt64Map(source map[string]int64) map[int]int64 {
+	out := make(map[int]int64, len(source))
+	for key, value := range source {
+		hour, err := strconv.Atoi(strings.TrimSpace(key))
+		if err != nil {
+			continue
+		}
+		hour = hour % 24
+		if hour < 0 {
+			hour += 24
+		}
+		out[hour] = nonNegativeInt64(value)
+	}
+	return out
 }

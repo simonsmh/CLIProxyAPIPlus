@@ -2,12 +2,16 @@ package management
 
 import (
 	"encoding/json"
+	"errors"
+	"io"
 	"net/http"
 	"time"
 
 	"github.com/gin-gonic/gin"
 	"github.com/router-for-me/CLIProxyAPI/v6/internal/usage"
 )
+
+var usageImportMaxBytes int64 = 20 << 20
 
 type usageExportPayload struct {
 	Version    int                      `json:"version"`
@@ -45,15 +49,20 @@ func (h *Handler) ExportUsageStatistics(c *gin.Context) {
 	})
 }
 
-// ImportUsageStatistics merges a previously exported usage snapshot into memory.
+// ImportUsageStatistics restores a previously exported usage snapshot into memory.
 func (h *Handler) ImportUsageStatistics(c *gin.Context) {
 	if h == nil || h.usageStats == nil {
 		c.JSON(http.StatusBadRequest, gin.H{"error": "usage statistics unavailable"})
 		return
 	}
 
-	data, err := c.GetRawData()
+	data, err := io.ReadAll(http.MaxBytesReader(c.Writer, c.Request.Body, usageImportMaxBytes))
 	if err != nil {
+		var maxBytesErr *http.MaxBytesError
+		if errors.As(err, &maxBytesErr) {
+			c.JSON(http.StatusRequestEntityTooLarge, gin.H{"error": "usage import payload too large"})
+			return
+		}
 		c.JSON(http.StatusBadRequest, gin.H{"error": "failed to read request body"})
 		return
 	}
@@ -68,7 +77,7 @@ func (h *Handler) ImportUsageStatistics(c *gin.Context) {
 		return
 	}
 
-	result := h.usageStats.MergeSnapshot(payload.Usage)
+	result := h.usageStats.RestoreSnapshot(payload.Usage)
 	snapshot := h.usageStats.Snapshot()
 	c.JSON(http.StatusOK, gin.H{
 		"added":           result.Added,
