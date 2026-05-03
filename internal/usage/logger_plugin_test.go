@@ -48,6 +48,77 @@ func TestRequestStatisticsRecordIncludesLatency(t *testing.T) {
 	}
 }
 
+func TestRequestStatisticsSanitizesDetailIdentifiers(t *testing.T) {
+	prevStatsEnabled := StatisticsEnabled()
+	SetStatisticsEnabled(true)
+	t.Cleanup(func() {
+		SetStatisticsEnabled(prevStatsEnabled)
+	})
+
+	const rawAPIKey = "sk-test-client-secret"
+	const rawSource = "person@example.com"
+	const rawAuthIndex = "raw-auth-index-secret"
+
+	stats := NewRequestStatistics()
+	stats.Record(context.Background(), coreusage.Record{
+		APIKey:      rawAPIKey,
+		Model:       "gpt-5.4",
+		Source:      rawSource,
+		AuthIndex:   rawAuthIndex,
+		RequestedAt: time.Date(2026, 3, 20, 12, 0, 0, 0, time.UTC),
+	})
+
+	snapshot := stats.Snapshot()
+	apiName := onlyAPIName(t, snapshot)
+	if strings.Contains(apiName, rawAPIKey) {
+		t.Fatalf("api bucket leaked raw key: %q", apiName)
+	}
+	details := onlyAPISnapshot(t, snapshot).Models["gpt-5.4"].Details
+	if len(details) != 1 {
+		t.Fatalf("details len = %d, want 1", len(details))
+	}
+	assertNoRawUsageIdentifier(t, details[0].Source, rawSource)
+	assertNoRawUsageIdentifier(t, details[0].AuthIndex, rawAuthIndex)
+}
+
+func TestRequestStatisticsRestoreSanitizesImportedDetails(t *testing.T) {
+	prevStatsEnabled := StatisticsEnabled()
+	SetStatisticsEnabled(true)
+	t.Cleanup(func() {
+		SetStatisticsEnabled(prevStatsEnabled)
+	})
+
+	const rawSource = "source:imported-person@example.com"
+	const rawAuthIndex = "auth:imported-auth-secret"
+	const rawAPIKey = "api-key:sk-imported-api-secret"
+
+	stats := NewRequestStatistics()
+	stats.RestoreSnapshot(StatisticsSnapshot{
+		APIs: map[string]APISnapshot{
+			rawAPIKey: {
+				Models: map[string]ModelSnapshot{
+					"gpt-5.4": {
+						Details: []RequestDetail{{
+							Timestamp: time.Date(2026, 3, 20, 12, 0, 0, 0, time.UTC),
+							Source:    rawSource,
+							AuthIndex: rawAuthIndex,
+						}},
+					},
+				},
+			},
+		},
+	})
+
+	snapshot := stats.Snapshot()
+	assertNoRawUsageIdentifier(t, onlyAPIName(t, snapshot), rawAPIKey)
+	details := onlyAPISnapshot(t, snapshot).Models["gpt-5.4"].Details
+	if len(details) != 1 {
+		t.Fatalf("details len = %d, want 1", len(details))
+	}
+	assertNoRawUsageIdentifier(t, details[0].Source, rawSource)
+	assertNoRawUsageIdentifier(t, details[0].AuthIndex, rawAuthIndex)
+}
+
 func TestRequestStatisticsUsesStableLoggingContext(t *testing.T) {
 	prevStatsEnabled := StatisticsEnabled()
 	SetStatisticsEnabled(true)
@@ -286,5 +357,18 @@ func requireSnapshotTotals(t *testing.T, got, want StatisticsSnapshot) {
 	}
 	if got.TokensByHour["12"] != want.TokensByHour["12"] {
 		t.Fatalf("tokens by hour[12] = %d, want %d", got.TokensByHour["12"], want.TokensByHour["12"])
+	}
+}
+
+func assertNoRawUsageIdentifier(t *testing.T, got, raw string) {
+	t.Helper()
+	if got == "" {
+		t.Fatalf("sanitized identifier is empty")
+	}
+	if got == raw || strings.Contains(got, raw) {
+		t.Fatalf("identifier leaked raw value: got %q raw %q", got, raw)
+	}
+	if !strings.HasPrefix(got, "source:") && !strings.HasPrefix(got, "auth:") && !strings.HasPrefix(got, "api-key:") {
+		t.Fatalf("identifier = %q, want stable redacted prefix", got)
 	}
 }

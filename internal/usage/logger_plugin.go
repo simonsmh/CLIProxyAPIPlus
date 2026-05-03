@@ -214,8 +214,8 @@ func (s *RequestStatistics) Record(ctx context.Context, record coreusage.Record)
 	s.updateAPIStats(stats, modelName, RequestDetail{
 		Timestamp: timestamp,
 		LatencyMs: normaliseLatency(record.Latency),
-		Source:    record.Source,
-		AuthIndex: record.AuthIndex,
+		Source:    sanitizeUsageDetailSource(record.Source),
+		AuthIndex: sanitizeUsageDetailAuthIndex(record.AuthIndex),
 		Tokens:    detail,
 		Failed:    failed,
 	})
@@ -308,6 +308,7 @@ func (s *RequestStatistics) Snapshot() StatisticsSnapshot {
 
 	result.APIs = make(map[string]APISnapshot, len(s.apis))
 	for apiName, stats := range s.apis {
+		apiName = sanitizeUsageAPIIdentifier(apiName)
 		apiSnapshot := APISnapshot{
 			TotalRequests: stats.TotalRequests,
 			TotalTokens:   stats.TotalTokens,
@@ -317,6 +318,9 @@ func (s *RequestStatistics) Snapshot() StatisticsSnapshot {
 		for modelName, modelStatsValue := range stats.Models {
 			requestDetails := make([]RequestDetail, len(modelStatsValue.Details))
 			copy(requestDetails, modelStatsValue.Details)
+			for i := range requestDetails {
+				requestDetails[i] = sanitizeRequestDetail(requestDetails[i])
+			}
 			apiSnapshot.Models[modelName] = ModelSnapshot{
 				TotalRequests: modelStatsValue.TotalRequests,
 				TotalTokens:   modelStatsValue.TotalTokens,
@@ -386,6 +390,7 @@ func (s *RequestStatistics) RestoreSnapshot(snapshot StatisticsSnapshot) MergeRe
 
 func (s *RequestStatistics) loadSnapshot(snapshot StatisticsSnapshot) {
 	for apiName, apiSnapshot := range snapshot.APIs {
+		apiName = sanitizeUsageAPIIdentifier(apiName)
 		stats := s.apiStatsForKey(apiName)
 		var apiRequests int64
 		var apiTokens int64
@@ -449,6 +454,7 @@ func normaliseRequestDetails(details []RequestDetail) ([]RequestDetail, detailAg
 		if detail.Timestamp.IsZero() {
 			detail.Timestamp = now
 		}
+		detail = sanitizeRequestDetail(detail)
 		out = append(out, detail)
 		totals.requests++
 		totals.tokens += detail.Tokens.TotalTokens
@@ -557,14 +563,127 @@ func normaliseUsageIdentifier(value string) string {
 	return trimRunes(value, maxUsageIdentifierRunes)
 }
 
+func sanitizeRequestDetail(detail RequestDetail) RequestDetail {
+	detail.Source = sanitizeUsageDetailSource(detail.Source)
+	detail.AuthIndex = sanitizeUsageDetailAuthIndex(detail.AuthIndex)
+	return detail
+}
+
+func sanitizeUsageAPIIdentifier(value string) string {
+	raw := strings.TrimSpace(value)
+	normalized := normaliseUsageIdentifier(raw)
+	if isSafeUsageIdentifier(normalized) {
+		return normalized
+	}
+	return "api-key:" + shortUsageHash(raw)
+}
+
+func sanitizeUsageDetailSource(value string) string {
+	raw := strings.TrimSpace(value)
+	normalized := normaliseUsageIdentifier(raw)
+	if normalized == unknownUsageBucket || isSafeUsageIdentifier(normalized) {
+		return normalized
+	}
+	return "source:" + shortUsageHash(raw)
+}
+
+func sanitizeUsageDetailAuthIndex(value string) string {
+	value = strings.TrimSpace(value)
+	if value == "" {
+		return ""
+	}
+	normalized := trimRunes(value, maxUsageIdentifierRunes)
+	lower := strings.ToLower(normalized)
+	if strings.HasPrefix(lower, "auth:") {
+		hash := strings.TrimPrefix(lower, "auth:")
+		if isHexIdentifier(hash, 12) || isHexIdentifier(hash, 16) || isHexIdentifier(hash, 64) {
+			return normalized
+		}
+		return "auth:" + shortUsageHash(value)
+	}
+	if isHexIdentifier(lower, 16) || isHexIdentifier(lower, 64) {
+		return normalized
+	}
+	return "auth:" + shortUsageHash(value)
+}
+
+func isSafeUsageIdentifier(value string) bool {
+	value = strings.TrimSpace(value)
+	if value == "" {
+		return true
+	}
+	lower := strings.ToLower(value)
+	if lower == unknownUsageBucket || lower == overflowUsageBucket {
+		return true
+	}
+	if strings.HasPrefix(lower, "api-key:") {
+		hash := strings.TrimPrefix(lower, "api-key:")
+		return isHexIdentifier(hash, 8) || isHexIdentifier(hash, 12) || isHexIdentifier(hash, 64)
+	}
+	if strings.HasPrefix(lower, "source:") {
+		hash := strings.TrimPrefix(lower, "source:")
+		return isHexIdentifier(hash, 12) || isHexIdentifier(hash, 64)
+	}
+	if isHTTPRoute(value) || isSafePathIdentifier(value) {
+		return true
+	}
+	switch lower {
+	case "gemini", "gemini-cli", "aistudio", "vertex", "claude", "codex", "openai",
+		"openai-compatibility", "openai-compatible", "antigravity", "github-copilot",
+		"gitlab", "cursor", "kiro", "kilo", "kimi", "iflow", "codebuddy", "local":
+		return true
+	default:
+		return false
+	}
+}
+
+func isSafePathIdentifier(value string) bool {
+	if !strings.HasPrefix(value, "/") {
+		return false
+	}
+	lower := strings.ToLower(value)
+	return !strings.Contains(value, "?") &&
+		!strings.Contains(lower, "key") &&
+		!strings.Contains(lower, "token") &&
+		!strings.Contains(lower, "auth")
+}
+
+func isHTTPRoute(value string) bool {
+	parts := strings.Fields(value)
+	if len(parts) != 2 || !strings.HasPrefix(parts[1], "/") {
+		return false
+	}
+	switch strings.ToUpper(parts[0]) {
+	case "GET", "POST", "PUT", "PATCH", "DELETE", "HEAD", "OPTIONS":
+		return true
+	default:
+		return false
+	}
+}
+
+func isHexIdentifier(value string, length int) bool {
+	if len(value) != length {
+		return false
+	}
+	for _, r := range value {
+		if (r < '0' || r > '9') && (r < 'a' || r > 'f') {
+			return false
+		}
+	}
+	return true
+}
+
 func secretUsageBucket(value string) string {
 	value = strings.TrimSpace(value)
 	if value == "" {
 		return ""
 	}
+	return fmt.Sprintf("api-key:%s", shortUsageHash(value)[:8])
+}
+
+func shortUsageHash(value string) string {
 	sum := sha256.Sum256([]byte(value))
-	hash := hex.EncodeToString(sum[:])[:8]
-	return fmt.Sprintf("api-key:%s", hash)
+	return hex.EncodeToString(sum[:])[:12]
 }
 
 func trimRunes(value string, maxRunes int) string {
