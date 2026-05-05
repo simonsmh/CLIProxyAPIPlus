@@ -3,86 +3,53 @@ package management
 import (
 	"encoding/json"
 	"errors"
-	"io"
 	"net/http"
-	"time"
+	"strconv"
+	"strings"
 
 	"github.com/gin-gonic/gin"
-	"github.com/router-for-me/CLIProxyAPI/v6/internal/usage"
+	"github.com/router-for-me/CLIProxyAPI/v6/internal/redisqueue"
 )
 
-var usageImportMaxBytes int64 = 20 << 20
+type usageQueueRecord []byte
 
-type usageExportPayload struct {
-	Version    int                      `json:"version"`
-	ExportedAt time.Time                `json:"exported_at"`
-	Usage      usage.StatisticsSnapshot `json:"usage"`
-}
-
-type usageImportPayload struct {
-	Version int                      `json:"version"`
-	Usage   usage.StatisticsSnapshot `json:"usage"`
-}
-
-// GetUsageStatistics returns the in-memory request statistics snapshot.
-func (h *Handler) GetUsageStatistics(c *gin.Context) {
-	var snapshot usage.StatisticsSnapshot
-	if h != nil && h.usageStats != nil {
-		snapshot = h.usageStats.Snapshot()
+func (r usageQueueRecord) MarshalJSON() ([]byte, error) {
+	if json.Valid(r) {
+		return append([]byte(nil), r...), nil
 	}
-	c.JSON(http.StatusOK, gin.H{
-		"usage":           snapshot,
-		"failed_requests": snapshot.FailureCount,
-	})
+	return json.Marshal(string(r))
 }
 
-// ExportUsageStatistics returns a complete usage snapshot for backup/migration.
-func (h *Handler) ExportUsageStatistics(c *gin.Context) {
-	var snapshot usage.StatisticsSnapshot
-	if h != nil && h.usageStats != nil {
-		snapshot = h.usageStats.Snapshot()
-	}
-	c.JSON(http.StatusOK, usageExportPayload{
-		Version:    1,
-		ExportedAt: time.Now().UTC(),
-		Usage:      snapshot,
-	})
-}
-
-// ImportUsageStatistics restores a previously exported usage snapshot into memory.
-func (h *Handler) ImportUsageStatistics(c *gin.Context) {
-	if h == nil || h.usageStats == nil {
-		c.JSON(http.StatusBadRequest, gin.H{"error": "usage statistics unavailable"})
+// GetUsageQueue pops queued usage records from the usage queue.
+func (h *Handler) GetUsageQueue(c *gin.Context) {
+	if h == nil {
+		c.JSON(http.StatusInternalServerError, gin.H{"error": "handler unavailable"})
 		return
 	}
 
-	data, err := io.ReadAll(http.MaxBytesReader(c.Writer, c.Request.Body, usageImportMaxBytes))
-	if err != nil {
-		var maxBytesErr *http.MaxBytesError
-		if errors.As(err, &maxBytesErr) {
-			c.JSON(http.StatusRequestEntityTooLarge, gin.H{"error": "usage import payload too large"})
-			return
-		}
-		c.JSON(http.StatusBadRequest, gin.H{"error": "failed to read request body"})
+	count, errCount := parseUsageQueueCount(c.Query("count"))
+	if errCount != nil {
+		c.JSON(http.StatusBadRequest, gin.H{"error": errCount.Error()})
 		return
 	}
 
-	var payload usageImportPayload
-	if err := json.Unmarshal(data, &payload); err != nil {
-		c.JSON(http.StatusBadRequest, gin.H{"error": "invalid json"})
-		return
-	}
-	if payload.Version != 0 && payload.Version != 1 {
-		c.JSON(http.StatusBadRequest, gin.H{"error": "unsupported version"})
-		return
+	items := redisqueue.PopOldest(count)
+	records := make([]usageQueueRecord, 0, len(items))
+	for _, item := range items {
+		records = append(records, usageQueueRecord(append([]byte(nil), item...)))
 	}
 
-	result := h.usageStats.RestoreSnapshot(payload.Usage)
-	snapshot := h.usageStats.Snapshot()
-	c.JSON(http.StatusOK, gin.H{
-		"added":           result.Added,
-		"skipped":         result.Skipped,
-		"total_requests":  snapshot.TotalRequests,
-		"failed_requests": snapshot.FailureCount,
-	})
+	c.JSON(http.StatusOK, records)
+}
+
+func parseUsageQueueCount(value string) (int, error) {
+	value = strings.TrimSpace(value)
+	if value == "" {
+		return 1, nil
+	}
+	count, errCount := strconv.Atoi(value)
+	if errCount != nil || count <= 0 {
+		return 0, errors.New("count must be a positive integer")
+	}
+	return count, nil
 }
