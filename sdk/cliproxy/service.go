@@ -1674,10 +1674,16 @@ func (s *Service) fetchKiroModels(a *coreauth.Auth) []*ModelInfo {
 	// Convert API models to ModelInfo
 	models := convertKiroAPIModels(apiModels)
 
-	// Generate agentic variants
+	baseCount := len(models)
+
+	// Generate agentic variants (only when kiro-system-prompt-inject-enable is on).
 	models = generateKiroAgenticVariants(models)
 
-	log.Infof("kiro: successfully fetched %d models from API (including agentic variants)", len(models))
+	if len(models) > baseCount {
+		log.Infof("kiro: fetched %d models from API (+%d agentic variants)", baseCount, len(models)-baseCount)
+	} else {
+		log.Infof("kiro: fetched %d models from API", baseCount)
+	}
 	return models
 }
 
@@ -1807,9 +1813,17 @@ func filterAgenticVariants(models []*ModelInfo) []*ModelInfo {
 }
 
 // generateKiroAgenticVariants generates agentic variants for Kiro models.
-// Agentic variants have optimized system prompts for coding agents.
+// Agentic variants share the backend model ID but apply a wrapped system
+// prompt for coding agents — that wrapping only happens when
+// kiro-system-prompt-inject-enable is on. When it's off, exposing "-agentic"
+// IDs in /v1/models is misleading (the flag gates the actual behavior), so
+// we return the input list unchanged.
 func generateKiroAgenticVariants(models []*ModelInfo) []*ModelInfo {
 	if len(models) == 0 {
+		return models
+	}
+
+	if !kirocommon.IsSystemPromptInjectEnabled() {
 		return models
 	}
 
