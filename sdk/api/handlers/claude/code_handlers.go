@@ -78,6 +78,15 @@ func (h *ClaudeCodeAPIHandler) ClaudeMessages(c *gin.Context) {
 
 	// Check if the client requested a streaming response.
 	streamResult := gjson.GetBytes(rawJSON, "stream")
+	log.Debugf("[qoder-debug] /v1/messages body preview: model=%q stream=%v body_prefix=%s",
+		gjson.GetBytes(rawJSON, "model").String(),
+		streamResult.Type,
+		func() string {
+			if len(rawJSON) > 300 {
+				return string(rawJSON[:300]) + "..."
+			}
+			return string(rawJSON)
+		}())
 	if !streamResult.Exists() || streamResult.Type == gjson.False {
 		h.handleNonStreamingResponse(c, rawJSON)
 	} else {

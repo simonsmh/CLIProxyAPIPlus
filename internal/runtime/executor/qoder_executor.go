@@ -587,8 +587,12 @@ func (e *QoderExecutor) CountTokens(ctx context.Context, auth *cliproxyauth.Auth
 
 // Execute executes a non-streaming request against Qoder API
 func (e *QoderExecutor) Execute(ctx context.Context, authRecord *cliproxyauth.Auth, req cliproxyexecutor.Request, opts cliproxyexecutor.Options) (cliproxyexecutor.Response, error) {
-	// Use streaming executor and accumulate
-	streamResult, err := e.ExecuteStream(ctx, authRecord, req, opts)
+	// Force ExecuteStream to emit raw OpenAI chunks (no cross-format
+	// translation) so we can accumulate content from choices[0].delta.
+	// We'll run TranslateNonStream ourselves at the end.
+	internalOpts := opts
+	internalOpts.SourceFormat = sdktranslator.FormatOpenAI
+	streamResult, err := e.ExecuteStream(ctx, authRecord, req, internalOpts)
 	if err != nil {
 		return cliproxyexecutor.Response{}, err
 	}
@@ -608,8 +612,16 @@ func (e *QoderExecutor) Execute(ctx context.Context, authRecord *cliproxyauth.Au
 			return cliproxyexecutor.Response{}, chunk.Err
 		}
 
+		// ExecuteStream was called with SourceFormat=FormatOpenAI so
+		// TranslateStream strips the "data:" prefix and returns raw JSON.
+		// Skip empty or [DONE] payloads.
+		raw := chunk.Payload
+		if len(raw) == 0 || bytes.Equal(bytes.TrimSpace(raw), []byte("[DONE]")) {
+			continue
+		}
+
 		var oiChunk map[string]interface{}
-		if err := json.Unmarshal(chunk.Payload, &oiChunk); err == nil {
+		if err := json.Unmarshal(raw, &oiChunk); err == nil {
 			if choices, ok := oiChunk["choices"].([]interface{}); ok && len(choices) > 0 {
 				if choice, ok := choices[0].(map[string]interface{}); ok {
 					if delta, ok := choice["delta"].(map[string]interface{}); ok {
