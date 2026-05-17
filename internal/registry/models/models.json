@@ -2175,61 +2175,67 @@
       "id": "auto",
       "name": "Auto",
       "owned_by": "qoder",
-      "description": "Qoder auto tier — picks the best model for the request"
-    },
-    {
-      "id": "efficient",
-      "name": "Efficient",
-      "owned_by": "qoder",
-      "description": "Qoder efficient tier — fast, low cost"
-    },
-    {
-      "id": "performance",
-      "name": "Performance",
-      "owned_by": "qoder",
-      "description": "Qoder performance tier — balanced speed and quality"
+      "description": "Qoder Auto tier — automatic model selection"
     },
     {
       "id": "ultimate",
       "name": "Ultimate",
       "owned_by": "qoder",
-      "description": "Qoder ultimate tier — maximum quality"
+      "description": "Qoder Ultimate tier — maximum quality"
+    },
+    {
+      "id": "performance",
+      "name": "Performance",
+      "owned_by": "qoder",
+      "description": "Qoder Performance tier — balanced speed and quality"
+    },
+    {
+      "id": "efficient",
+      "name": "Efficient",
+      "owned_by": "qoder",
+      "description": "Qoder Efficient tier — fast, low cost"
     },
     {
       "id": "lite",
       "name": "Lite",
       "owned_by": "qoder",
-      "description": "Qoder lite tier — minimal cost"
+      "description": "Qoder Lite tier — minimal cost"
     },
     {
       "id": "qmodel",
-      "name": "Q",
+      "name": "Qwen3.6-Plus",
       "owned_by": "qoder",
-      "description": "Qoder Q model (frontier)"
+      "description": "Qwen 3.6 Plus via Qoder"
     },
     {
-      "id": "q35model",
-      "name": "Q3.5",
+      "id": "dmodel",
+      "name": "DeepSeek-V4-Pro",
       "owned_by": "qoder",
-      "description": "Qoder Q3.5 model (frontier)"
+      "description": "DeepSeek V4 Pro via Qoder"
     },
     {
-      "id": "gmodel",
-      "name": "G",
+      "id": "dfmodel",
+      "name": "DeepSeek-V4-Flash",
       "owned_by": "qoder",
-      "description": "Qoder G model — GPT-class (frontier)"
+      "description": "DeepSeek V4 Flash via Qoder"
+    },
+    {
+      "id": "gm51model",
+      "name": "GLM-5.1",
+      "owned_by": "qoder",
+      "description": "GLM 5.1 via Qoder"
     },
     {
       "id": "kmodel",
-      "name": "K",
+      "name": "Kimi-K2.6",
       "owned_by": "qoder",
-      "description": "Qoder K model — Kimi-class (frontier)"
+      "description": "Kimi K2.6 via Qoder"
     },
     {
       "id": "mmodel",
-      "name": "M",
+      "name": "MiniMax-M2.7",
       "owned_by": "qoder",
-      "description": "Qoder M model (frontier)"
+      "description": "MiniMax M2.7 via Qoder"
     }
   ]
 }

@@ -10,35 +10,39 @@ import (
 )
 
 const (
-	// QoderInferURL is the base URL for Qoder inference API.
-	QoderInferURL = "https://api1.qoder.sh"
-	// QoderSigPath is the signing path for COSY authentication.
+	// QoderInferURL is the base URL for Qoder inference (chat / model list).
+	// Aligned with Veria v1.3.7's reverse-engineering: api3.qoder.sh.
+	QoderInferURL = QoderChatBase
+	// QoderSigPath is the relative path of the streaming chat endpoint
+	// without the /algo prefix; used both for URL construction and for
+	// the Cosy-Sigpath header.
 	QoderSigPath = "/api/v2/service/pro/sse/agent_chat_generation"
 	// QoderChatURL is the full URL for the streaming chat endpoint.
-	QoderChatURL = QoderInferURL + "/algo" + QoderSigPath + "?AgentId=agent_common"
+	QoderChatURL = QoderInferURL + "/algo" + QoderSigPath + "?FetchKeys=llm_model_result&AgentId=agent_common"
+	// QoderModelListURL is the full URL for /algo/api/v2/model/list on the
+	// inference host. The endpoint uses COSY signing; pass an empty body.
+	QoderModelListURL = QoderInferURL + "/algo/api/v2/model/list"
 )
 
-// ModelMap maps user-facing model identifiers to upstream Qoder model keys.
-// Based on the Qoder CLI reverse-engineering notes
-// (https://github.com/alingse/qodercli-reverse, docs/03-llm-integration.md):
-//
-//   - Tier models: auto, efficient, performance, ultimate, lite
-//   - Frontier ("Q" family) models: qmodel, q35model, gmodel, kmodel, mmodel
-//
-// All identifiers are passed through as-is — the upstream accepts these strings
-// directly, so the map is identity. The map exists so we can cheaply validate
-// "is this a known qoder model?" and emit a stable set in /v1/models.
+// ModelMap is the canonical set of model identifiers Qoder accepts. Based on
+// Ve-ria/CLIProxyAPIPlus v1.3.7 (commit a97cd101) — five tier models plus six
+// "frontier" backing-model identifiers. The map is identity (key == value);
+// kept as a map so callers can cheaply test "is this a known qoder model?"
+// before sending the request.
 var ModelMap = map[string]string{
+	// Tier models — pick a quality/cost tradeoff
 	"auto":        "auto",
-	"efficient":   "efficient",
-	"performance": "performance",
 	"ultimate":    "ultimate",
+	"performance": "performance",
+	"efficient":   "efficient",
 	"lite":        "lite",
-	"qmodel":      "qmodel",
-	"q35model":    "q35model",
-	"gmodel":      "gmodel",
-	"kmodel":      "kmodel",
-	"mmodel":      "mmodel",
+	// Frontier models — pin a specific backing model
+	"qmodel":    "qmodel",    // Qwen 3.6 Plus
+	"dmodel":    "dmodel",    // DeepSeek V4 Pro
+	"dfmodel":   "dfmodel",   // DeepSeek V4 Flash
+	"gm51model": "gm51model", // GLM 5.1
+	"kmodel":    "kmodel",    // Kimi K2.6
+	"mmodel":    "mmodel",    // MiniMax M2.7
 }
 
 // doRefreshToken performs a token refresh and persists the result to authFilePath.

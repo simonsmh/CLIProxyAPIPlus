@@ -1237,7 +1237,7 @@ func (s *Service) registerModelsForAuth(a *coreauth.Auth) {
 		models = registry.GetCodeBuddyModels()
 		models = applyExcludedModels(models, excluded)
 	case "qoder":
-		models = registry.GetQoderModels()
+		models = executor.FetchQoderModels(context.Background(), a, s.cfg)
 		models = applyExcludedModels(models, excluded)
 	default:
 		// Handle OpenAI-compatibility providers by name using config

@@ -21,6 +21,10 @@ const (
 	QoderOpenAPIBase = "https://openapi.qoder.sh"
 	// QoderCenterBase is the base URL for Qoder Center API
 	QoderCenterBase = "https://center.qoder.sh"
+	// QoderChatBase is the inference host used for chat / model list /
+	// other algo-prefixed endpoints. Veria's reverse-engineering put this
+	// at api3.qoder.sh; older IDE builds used api1.
+	QoderChatBase = "https://api3.qoder.sh"
 	// QoderLoginURL is the URL for user authentication
 	QoderLoginURL = "https://qoder.com/device/selectAccounts"
 	// QoderOAuthTokenEndpoint is the URL for polling device code token
@@ -29,10 +33,22 @@ const (
 	QoderRefreshTokenEndpoint = "https://center.qoder.sh/algo/api/v3/user/refresh_token"
 	// QoderUserInfoEndpoint is the URL for fetching user information
 	QoderUserInfoEndpoint = "https://openapi.qoder.sh/api/v1/userinfo"
-	// QoderCLIVersion is the CLI version for COSY authentication
-	QoderCLIVersion = "0.9.0"
-	// QoderMachineOS is the machine OS identifier for COSY authentication
-	QoderMachineOS = "x86_64_linux"
+	// QoderIDEVersion is the upstream IDE version that the COSY signature
+	// scheme expects in payload.cosyVersion and the Cosy-Version header.
+	// Bumped from 0.9.0 to 0.14.2 to match the current Qoder server's
+	// signing rules (the 0.9 IDE format was rejected with code 101).
+	QoderIDEVersion = "0.14.2"
+	// QoderCLIVersion is the deprecated alias kept for backward compatibility
+	// with earlier code that referenced this constant.
+	QoderCLIVersion = QoderIDEVersion
+	// QoderMachineOS is the machine OS identifier sent in COSY headers.
+	// qodercli's signing scheme treats this as a fixed magic string; the
+	// real client sends "x86_64_windows" regardless of host OS.
+	QoderMachineOS = "x86_64_windows"
+	// QoderMachineTypeMagic is a fixed token sent as Cosy-Machinetype.
+	// Reverse-engineered from Veria — value chosen so server-side checks
+	// pass; not derived from the local machine.
+	QoderMachineTypeMagic = "d19de69691ac029caa"
 )
 
 // QoderTokenData represents the OAuth credentials from device flow polling

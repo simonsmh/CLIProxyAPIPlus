@@ -5,6 +5,7 @@ import (
 	"bytes"
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"io"
 	"net/http"
@@ -15,11 +16,13 @@ import (
 	"github.com/google/uuid"
 	qoderauth "github.com/router-for-me/CLIProxyAPI/v7/internal/auth/qoder"
 	"github.com/router-for-me/CLIProxyAPI/v7/internal/config"
+	"github.com/router-for-me/CLIProxyAPI/v7/internal/registry"
 	"github.com/router-for-me/CLIProxyAPI/v7/internal/runtime/executor/helps"
 	cliproxyauth "github.com/router-for-me/CLIProxyAPI/v7/sdk/cliproxy/auth"
 	cliproxyexecutor "github.com/router-for-me/CLIProxyAPI/v7/sdk/cliproxy/executor"
 	sdktranslator "github.com/router-for-me/CLIProxyAPI/v7/sdk/translator"
 	log "github.com/sirupsen/logrus"
+	"github.com/tidwall/gjson"
 )
 
 // QoderExecutor executes requests against the Qoder API with COSY authentication
@@ -173,6 +176,7 @@ func (e *QoderExecutor) ExecuteStream(ctx context.Context, authRecord *cliproxya
 			AuthToken: storage.Token,
 			Name:      storage.Name,
 			Email:     storage.Email,
+			MachineID: storage.MachineID,
 		},
 	)
 	if err != nil {
@@ -694,6 +698,7 @@ func (e *QoderExecutor) HttpRequest(ctx context.Context, auth *cliproxyauth.Auth
 			AuthToken: storage.Token,
 			Name:      storage.Name,
 			Email:     storage.Email,
+			MachineID: storage.MachineID,
 		},
 	)
 	if err != nil {
@@ -708,4 +713,122 @@ func (e *QoderExecutor) HttpRequest(ctx context.Context, auth *cliproxyauth.Auth
 	req = req.WithContext(ctx)
 	httpClient := helps.NewProxyAwareHTTPClient(ctx, e.cfg, auth, 0)
 	return httpClient.Do(req)
+}
+
+// FetchQoderModels retrieves the live model list from Qoder's
+// /algo/api/v2/model/list endpoint and converts it into ModelInfo entries.
+// Falls back to the static registry if the auth lacks credentials, the request
+// fails, or the response is malformed. Mirrors the FetchKiloModels /
+// FetchCursorModels pattern used by other dynamic providers.
+func FetchQoderModels(ctx context.Context, auth *cliproxyauth.Auth, cfg *config.Config) []*registry.ModelInfo {
+	storage, ok := auth.Storage.(*qoderauth.QoderTokenStorage)
+	if !ok || storage == nil || storage.Token == "" {
+		log.Debug("qoder: no token, returning static models")
+		return registry.GetQoderModels()
+	}
+
+	ctx, cancel := context.WithTimeout(ctx, 15*time.Second)
+	defer cancel()
+
+	headers, err := qoderauth.BuildAuthHeaders(nil, qoderauth.QoderModelListURL, qoderauth.CosyCredentials{
+		UserID:    storage.UserID,
+		AuthToken: storage.Token,
+		Name:      storage.Name,
+		Email:     storage.Email,
+		MachineID: storage.MachineID,
+	})
+	if err != nil {
+		log.Warnf("qoder: build cosy headers for model list: %v", err)
+		return registry.GetQoderModels()
+	}
+
+	req, err := http.NewRequestWithContext(ctx, http.MethodGet, qoderauth.QoderModelListURL, nil)
+	if err != nil {
+		log.Warnf("qoder: build model list request: %v", err)
+		return registry.GetQoderModels()
+	}
+	req.Header.Set("Accept", "application/json")
+	req.Header.Set("Accept-Encoding", "identity")
+	headers.Apply(req)
+
+	httpClient := helps.NewProxyAwareHTTPClient(ctx, cfg, auth, 0)
+	resp, err := httpClient.Do(req)
+	if err != nil {
+		if errors.Is(err, context.Canceled) || errors.Is(err, context.DeadlineExceeded) {
+			log.Warnf("qoder: model list fetch canceled: %v", err)
+		} else {
+			log.Warnf("qoder: model list fetch failed: %v", err)
+		}
+		return registry.GetQoderModels()
+	}
+	defer func() { _ = resp.Body.Close() }()
+
+	body, err := io.ReadAll(resp.Body)
+	if err != nil {
+		log.Warnf("qoder: read model list response: %v", err)
+		return registry.GetQoderModels()
+	}
+	if resp.StatusCode != http.StatusOK {
+		log.Warnf("qoder: model list returned %d: %s", resp.StatusCode, truncate(string(body), 300))
+		return registry.GetQoderModels()
+	}
+
+	chat := gjson.GetBytes(body, "chat")
+	if !chat.Exists() || !chat.IsArray() {
+		log.Warnf("qoder: model list response missing 'chat' array")
+		return registry.GetQoderModels()
+	}
+
+	now := time.Now().Unix()
+	models := make([]*registry.ModelInfo, 0, 16)
+	chat.ForEach(func(_, entry gjson.Result) bool {
+		key := entry.Get("key").String()
+		if key == "" {
+			return true
+		}
+		if !entry.Get("enable").Bool() {
+			return true
+		}
+		display := entry.Get("display_name").String()
+		if display == "" {
+			display = key
+		}
+		ctxLen := int(entry.Get("max_input_tokens").Int())
+		isReasoning := entry.Get("is_reasoning").Bool()
+		isVL := entry.Get("is_vl").Bool()
+
+		mi := &registry.ModelInfo{
+			ID:            key,
+			Object:        "model",
+			Created:       now,
+			OwnedBy:       "qoder",
+			Type:          "qoder",
+			DisplayName:   display,
+			Description:   fmt.Sprintf("%s via Qoder", display),
+			ContextLength: ctxLen,
+		}
+		if isVL {
+			mi.SupportedInputModalities = []string{"TEXT", "IMAGE"}
+		}
+		if isReasoning {
+			mi.Thinking = &registry.ThinkingSupport{Levels: []string{"low", "medium", "high"}}
+		}
+		models = append(models, mi)
+		return true
+	})
+
+	if len(models) == 0 {
+		log.Warn("qoder: model list returned no enabled models, falling back to static")
+		return registry.GetQoderModels()
+	}
+
+	log.Infof("qoder: fetched %d models from /algo/api/v2/model/list", len(models))
+	return models
+}
+
+func truncate(s string, n int) string {
+	if len(s) <= n {
+		return s
+	}
+	return s[:n] + "..."
 }

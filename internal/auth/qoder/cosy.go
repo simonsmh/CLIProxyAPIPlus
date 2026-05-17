@@ -6,6 +6,7 @@ package qoder
 import (
 	"crypto/aes"
 	"crypto/cipher"
+	"crypto/md5"
 	"crypto/rand"
 	"crypto/rsa"
 	"crypto/sha256"
@@ -50,16 +51,33 @@ type CosyPayload struct {
 	IdeVersion  string `json:"ideVersion"`
 }
 
-// CosyHeaders holds the generated COSY authentication headers
+// CosyHeaders holds the generated COSY authentication headers, matching the
+// header set the official qodercli sends. The fields named with snake/camel
+// quirks reflect the on-the-wire header keys.
 type CosyHeaders struct {
 	Authorization string
-	CosyKey       string
-	CosyUser      string
-	CosyDate      string
-	XRequestID    string
-	XMachineOS    string
-	XIDEPlatform  string
-	XVersion      string
+
+	// Cosy-* headers
+	CosyKey            string
+	CosyUser           string
+	CosyDate           string
+	CosyVersion        string
+	CosyMachineID      string
+	CosyMachineToken   string
+	CosyMachineType    string
+	CosyMachineOS      string
+	CosyClientType     string
+	CosyClientIP       string
+	CosyBodyHash       string
+	CosyBodyLength     string
+	CosySigPath        string
+	CosyDataPolicy     string
+	CosyOrganizationID string
+	CosyOrgTags        string
+
+	// X-* and Login-* auxiliary headers
+	XRequestID   string
+	LoginVersion string
 }
 
 // Apply writes the COSY headers onto an HTTP request. Caller is responsible for
@@ -72,10 +90,21 @@ func (h *CosyHeaders) Apply(req *http.Request) {
 	req.Header.Set("Cosy-Key", h.CosyKey)
 	req.Header.Set("Cosy-User", h.CosyUser)
 	req.Header.Set("Cosy-Date", h.CosyDate)
+	req.Header.Set("Cosy-Version", h.CosyVersion)
+	req.Header.Set("Cosy-Machineid", h.CosyMachineID)
+	req.Header.Set("Cosy-Machinetoken", h.CosyMachineToken)
+	req.Header.Set("Cosy-Machinetype", h.CosyMachineType)
+	req.Header.Set("Cosy-Machineos", h.CosyMachineOS)
+	req.Header.Set("Cosy-Clienttype", h.CosyClientType)
+	req.Header.Set("Cosy-Clientip", h.CosyClientIP)
+	req.Header.Set("Cosy-Bodyhash", h.CosyBodyHash)
+	req.Header.Set("Cosy-Bodylength", h.CosyBodyLength)
+	req.Header.Set("Cosy-Sigpath", h.CosySigPath)
+	req.Header.Set("Cosy-Data-Policy", h.CosyDataPolicy)
+	req.Header.Set("Cosy-Organization-Id", h.CosyOrganizationID)
+	req.Header.Set("Cosy-Organization-Tags", h.CosyOrgTags)
+	req.Header.Set("Login-Version", h.LoginVersion)
 	req.Header.Set("X-Request-Id", h.XRequestID)
-	req.Header.Set("X-Machine-OS", h.XMachineOS)
-	req.Header.Set("X-IDE-Platform", h.XIDEPlatform)
-	req.Header.Set("X-Version", h.XVersion)
 }
 
 // parseRSAPublicKey parses the PEM-encoded RSA public key.
@@ -111,70 +140,68 @@ func getCosyPublicKey() (*rsa.PublicKey, error) {
 	return cosyPublicKey, cosyPublicKeyErr
 }
 
-// generateAESKey generates a random 16-character AES key (UUID hex prefix)
-func generateAESKey() ([]byte, error) {
+// generateAESKey returns a 16-byte AES-128 key derived from a fresh UUID.
+// Matches Veria/qodercli convention: uuid.New().String()[:16] — the first 16
+// chars of the canonical UUID string include hyphens (e.g. "ad24345f-1a3e-4").
+func generateAESKey() string {
 	id := uuid.New().String()
-	// Remove hyphens and take first 16 characters
-	hexKey := strings.ReplaceAll(id, "-", "")[:16]
-	return []byte(hexKey), nil
+	return id[:16]
 }
 
-// encryptUserInfo performs AES-128-CBC encryption on user info and RSA encryption on AES key
-// Returns (cosyKey_b64, info_b64) where:
-//   - cosyKey_b64 = base64(RSA_PKCS1_encrypt(aes_key_bytes))
-//   - info_b64 = base64(AES-128-CBC_encrypt(json(user_info)))
-func encryptUserInfo(userInfo *UserInfo) (string, string, error) {
-	// Generate random 16-char AES key
-	aesKey, err := generateAESKey()
+// aesEncryptCBCBase64 encrypts plaintext with AES-128-CBC. The IV reuses the
+// raw 16-byte key (matches qodercli) — produces deterministic IV but the key
+// is fresh per request, so each request still uses a unique IV.
+func aesEncryptCBCBase64(plaintext, keyStr string) (string, error) {
+	keyBytes := []byte(keyStr)
+	if len(keyBytes) != 16 {
+		return "", fmt.Errorf("aes key must be 16 bytes, got %d", len(keyBytes))
+	}
+	block, err := aes.NewCipher(keyBytes)
 	if err != nil {
-		return "", "", fmt.Errorf("failed to generate AES key: %w", err)
+		return "", fmt.Errorf("aes cipher: %w", err)
 	}
-
-	// Generate random IV for AES-CBC (should be unpredictable and unique)
-	iv := make([]byte, aes.BlockSize)
-	if _, err := rand.Read(iv); err != nil {
-		return "", "", fmt.Errorf("failed to generate IV: %w", err)
+	padded, err := pkcs7Pad([]byte(plaintext), block.BlockSize())
+	if err != nil {
+		return "", fmt.Errorf("pkcs7 pad: %w", err)
 	}
+	iv := keyBytes[:16]
+	ciphertext := make([]byte, len(padded))
+	cipher.NewCBCEncrypter(block, iv).CryptBlocks(ciphertext, padded)
+	return base64.StdEncoding.EncodeToString(ciphertext), nil
+}
 
-	// Serialize user info to JSON
+// rsaEncryptBase64 RSA-PKCS1v15 encrypts data with the cached server public key
+// and returns the base64-encoded ciphertext.
+func rsaEncryptBase64(data []byte) (string, error) {
+	pubKey, err := getCosyPublicKey()
+	if err != nil {
+		return "", err
+	}
+	encrypted, err := rsa.EncryptPKCS1v15(rand.Reader, pubKey, data)
+	if err != nil {
+		return "", fmt.Errorf("rsa encrypt: %w", err)
+	}
+	return base64.StdEncoding.EncodeToString(encrypted), nil
+}
+
+// encryptUserInfo serializes the user info, AES-encrypts it, and RSA-encrypts
+// the AES key. Returns (cosyKey, info) where:
+//   - cosyKey = base64(RSA(aes_key))
+//   - info    = base64(AES-128-CBC(json(user_info)))
+func encryptUserInfo(userInfo *UserInfo) (string, string, error) {
+	aesKey := generateAESKey()
 	plaintext, err := json.Marshal(userInfo)
 	if err != nil {
-		return "", "", fmt.Errorf("failed to marshal user info: %w", err)
+		return "", "", fmt.Errorf("marshal user info: %w", err)
 	}
-
-	// PKCS7 padding for AES block size
-	padded, err := pkcs7Pad(plaintext, aes.BlockSize)
-	if err != nil {
-		return "", "", fmt.Errorf("failed to pad plaintext: %w", err)
-	}
-
-	// AES-128-CBC encryption
-	block, err := aes.NewCipher(aesKey)
-	if err != nil {
-		return "", "", fmt.Errorf("failed to create AES cipher: %w", err)
-	}
-
-	ciphertext := make([]byte, len(padded))
-	mode := cipher.NewCBCEncrypter(block, iv)
-	mode.CryptBlocks(ciphertext, padded)
-
-	// Base64 encode the encrypted info
-	infoB64 := base64.StdEncoding.EncodeToString(ciphertext)
-
-	// RSA-PKCS1-v1.5 encrypt the AES key
-	pubKey, err := getCosyPublicKey()
+	infoB64, err := aesEncryptCBCBase64(string(plaintext), aesKey)
 	if err != nil {
 		return "", "", err
 	}
-
-	encryptedKey, err := rsa.EncryptPKCS1v15(rand.Reader, pubKey, aesKey)
+	cosyKeyB64, err := rsaEncryptBase64([]byte(aesKey))
 	if err != nil {
-		return "", "", fmt.Errorf("failed to encrypt AES key: %w", err)
+		return "", "", err
 	}
-
-	// Base64 encode the encrypted key
-	cosyKeyB64 := base64.StdEncoding.EncodeToString(encryptedKey)
-
 	return cosyKeyB64, infoB64, nil
 }
 
@@ -206,6 +233,7 @@ type CosyCredentials struct {
 	AuthToken string
 	Name      string
 	Email     string
+	MachineID string
 }
 
 // FromStorage populates CosyCredentials from the persisted QoderTokenStorage.
@@ -217,71 +245,105 @@ func (c *CosyCredentials) FromStorage(s *QoderTokenStorage) {
 	c.AuthToken = s.Token
 	c.Name = s.Name
 	c.Email = s.Email
+	c.MachineID = s.MachineID
 }
 
-// BuildAuthHeaders builds COSY v0.9 auth headers for a single signed request.
-// Algorithm originates from sharedProcessMain.js (encryptUserInfo + generateAuthToken).
-// CLI version and machine OS are read from the package constants.
+// computeSigPath extracts the signing path from a request URL by:
+//  1. taking the path portion (drops scheme, host, query)
+//  2. stripping the leading "/algo" prefix if present
+//
+// Matches qodercli convention: sigPath = path_after_host, with leading /algo
+// removed. Empty input returns empty string.
+func computeSigPath(requestURL string) (string, error) {
+	parsed, err := url.Parse(requestURL)
+	if err != nil {
+		return "", fmt.Errorf("parse request URL: %w", err)
+	}
+	sigPath := parsed.Path
+	if strings.HasPrefix(sigPath, "/algo") {
+		sigPath = sigPath[len("/algo"):]
+	}
+	return sigPath, nil
+}
+
+// BuildAuthHeaders signs a single Qoder request using the COSY scheme used by
+// the official qodercli (v0.14+). The body argument MUST be the exact bytes
+// the request will send — both sigInput and Cosy-Bodyhash are computed from
+// it. For GET requests pass nil or empty.
+//
+// Reference: github.com/Ve-ria/CLIProxyAPIPlus internal/runtime/executor/qoder_executor.go
+// (commits e0f1c968 + d72fa22b — MD5 hash, full Cosy-* header set).
 func BuildAuthHeaders(body []byte, requestURL string, creds CosyCredentials) (*CosyHeaders, error) {
-	// Build user info
-	userInfo := &UserInfo{
+	if creds.UserID == "" {
+		return nil, fmt.Errorf("cosy: user id is empty")
+	}
+	if creds.AuthToken == "" {
+		return nil, fmt.Errorf("cosy: auth token is empty")
+	}
+
+	cosyKey, infoB64, err := encryptUserInfo(&UserInfo{
 		UID:                creds.UserID,
 		SecurityOAuthToken: creds.AuthToken,
 		Name:               creds.Name,
 		AID:                "",
 		Email:              creds.Email,
-	}
-
-	// Encrypt user info
-	cosyKeyB64, infoB64, err := encryptUserInfo(userInfo)
+	})
 	if err != nil {
-		return nil, fmt.Errorf("failed to encrypt user info: %w", err)
+		return nil, fmt.Errorf("encrypt user info: %w", err)
 	}
 
-	// Generate request ID and timestamp
+	timestamp := strconv.FormatInt(time.Now().Unix(), 10)
 	requestID := uuid.New().String()
-	timestamp := fmt.Sprintf("%d", time.Now().Unix())
 
-	// Build payload JSON → base64
-	payload := &CosyPayload{
+	payloadJSON, err := json.Marshal(&CosyPayload{
 		Version:     "v1",
 		RequestID:   requestID,
 		Info:        infoB64,
-		CosyVersion: QoderCLIVersion,
+		CosyVersion: QoderIDEVersion,
 		IdeVersion:  "",
-	}
-
-	payloadJSON, err := json.Marshal(payload)
+	})
 	if err != nil {
-		return nil, fmt.Errorf("failed to marshal payload: %w", err)
+		return nil, fmt.Errorf("marshal cosy payload: %w", err)
 	}
 	payloadB64 := base64.StdEncoding.EncodeToString(payloadJSON)
 
-	// Signing path: strip /algo prefix and query string
-	parsed, err := url.Parse(requestURL)
+	sigPath, err := computeSigPath(requestURL)
 	if err != nil {
-		return nil, fmt.Errorf("failed to parse request URL: %w", err)
-	}
-	sigPath := parsed.Path
-	if strings.HasPrefix(sigPath, "/algo") {
-		sigPath = sigPath[5:]
+		return nil, err
 	}
 
-	// Signature: SHA256(payload_b64 \n cosy_key \n timestamp \n body_str \n sigpath)
-	bodyStr := string(body)
-	sigInput := fmt.Sprintf("%s\n%s\n%s\n%s\n%s", payloadB64, cosyKeyB64, timestamp, bodyStr, sigPath)
-	hash := sha256.Sum256([]byte(sigInput))
-	sig := fmt.Sprintf("%x", hash)
+	bodyForSig := string(body)
+	sigInput := fmt.Sprintf("%s\n%s\n%s\n%s\n%s", payloadB64, cosyKey, timestamp, bodyForSig, sigPath)
+	sig := fmt.Sprintf("%x", md5.Sum([]byte(sigInput)))
+
+	bodyHash := fmt.Sprintf("%x", md5.Sum(body))
+	bodyLen := strconv.Itoa(len(body))
+
+	machineID := creds.MachineID
+	if machineID == "" {
+		machineID = generateMachineID()
+	}
 
 	return &CosyHeaders{
-		Authorization: fmt.Sprintf("Bearer COSY.%s.%s", payloadB64, sig),
-		CosyKey:       cosyKeyB64,
-		CosyUser:      creds.UserID,
-		CosyDate:      timestamp,
-		XRequestID:    requestID,
-		XMachineOS:    QoderMachineOS,
-		XIDEPlatform:  "cli",
-		XVersion:      QoderCLIVersion,
+		Authorization:      fmt.Sprintf("Bearer COSY.%s.%s", payloadB64, sig),
+		CosyKey:            cosyKey,
+		CosyUser:           creds.UserID,
+		CosyDate:           timestamp,
+		CosyVersion:        QoderIDEVersion,
+		CosyMachineID:      machineID,
+		CosyMachineToken:   machineID,
+		CosyMachineType:    QoderMachineTypeMagic,
+		CosyMachineOS:      QoderMachineOS,
+		CosyClientType:     "0",
+		CosyClientIP:       "127.0.0.1",
+		CosyBodyHash:       bodyHash,
+		CosyBodyLength:     bodyLen,
+		CosySigPath:        sigPath,
+		CosyDataPolicy:     "AGREE",
+		CosyOrganizationID: "",
+		CosyOrgTags:        "",
+		LoginVersion:       "v2",
+		XRequestID:         uuid.New().String(),
 	}, nil
 }
 
