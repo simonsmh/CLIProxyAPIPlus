@@ -329,18 +329,15 @@ func (e *QoderExecutor) ExecuteStream(ctx context.Context, authRecord *cliproxya
 	}, nil
 }
 
-// messagesToPromptGeneric converts generic messages to Qoder prompt format
-
-const qoderToolCallInstructions = "[TOOL CALL INSTRUCTIONS]\nWhen you need to use a tool, output EXACTLY this on its own line and stop:\n\nCalled tool: tool_name({\"arg\": \"value\"})\n\nRules — no exceptions:\n- ONLY use the format above. No JSON-only blocks. No ```bash blocks.\n- If a tool is needed, call it IMMEDIATELY — do not describe what you are about to do, just do it.\n- Do NOT say \"I'll run...\", \"Let me check...\", \"Running now\", \"On it\" — output the Called tool line and stop.\n- To run a shell command: Called tool: exec({\"command\":\"your command here\"})\n- Do NOT invent or fabricate tool results. No results until the system returns them.\n- After receiving a tool result, call another tool or write your final answer.\n- Do NOT offer to perform tasks that require tools you do not have access to.\n- If no tool is needed, respond normally."
-
-const qoderBehaviorInstructions = "[BEHAVIOR INSTRUCTIONS]\nPlan before a multi-step task:\n- If completing the task will require more than 2 tool calls, state your plan in one sentence before the first call.\n- Then execute — do not re-explain the plan on each step.\n\nNarrate progress between calls:\n- After every 2-3 tool calls, emit one short status line so the user can follow along (e.g. \"Found the file, now checking contents...\").\n- Keep it to one line — then immediately make the next tool call.\n\nPersist until the task is done:\n- Do NOT give up after one failed attempt. Try at least 2-5 different approaches before concluding something is impossible.\n- If a command fails, read the error message and fix it — wrong flags, wrong path, wrong syntax. Adjust and retry.\n- Only report failure after genuinely exhausting options. Describe what you tried and what each attempt returned.\n\nVerify before you state:\n- Do NOT state facts about emails, files, data, or system state from memory. If you can check it with a tool, check it first.\n- If you are unsure whether something exists or is true, run a tool to find out before answering.\n- Be honest about things you failed to do or are not sure about — do not make claims not supported by what the tools returned.\n\nRead the help before using an unfamiliar command:\n- If you are unsure what flags or arguments a CLI tool accepts, run it with --help first.\n- Example: Called tool: exec({\"command\":\"gog gmail --help\"})\n- The help output will tell you exactly what to do. Use it — do not guess."
-
+// messagesToPromptGeneric flattens the message history into a plain-text
+// "prompt" that Qoder uses for the questionText / chatContext.text fields.
+// We DO NOT inject any "use this tool by writing 'Called tool: ...'"
+// scaffolding here — Qoder accepts native OpenAI-style tools[] and emits
+// real tool_use events, so prompting the model to use a text format would
+// produce duplicate / mixed-format tool calls.
 func messagesToPromptGeneric(messages []interface{}, tools interface{}) string {
-	parts := make([]string, 0, len(messages)+2)
-	if tools != nil {
-		parts = append(parts, qoderToolCallInstructions)
-		parts = append(parts, qoderBehaviorInstructions)
-	}
+	_ = tools
+	parts := make([]string, 0, len(messages))
 
 	for _, msg := range messages {
 		msgMap, ok := msg.(map[string]interface{})
@@ -408,47 +405,26 @@ func normalizeQoderMessages(messages []interface{}) []interface{} {
 		role, _ := msgMap["role"].(string)
 		switch role {
 		case "tool":
-			name, _ := msgMap["name"].(string)
-			if name == "" {
-				name = "tool"
+			// OpenAI-style tool result. Forward as a real role:"tool" message
+			// with the matching tool_call_id so the server can stitch it back
+			// onto the prior assistant tool_calls turn.
+			cloned := make(map[string]interface{}, len(msgMap)+1)
+			for k, v := range msgMap {
+				cloned[k] = v
 			}
-			content := extractContentGeneric(msgMap["content"])
-			out = append(out, map[string]interface{}{
-				"role":    "user",
-				"content": fmt.Sprintf("[Tool Result for %s]\n%s", name, content),
-			})
+			cloned["content"] = extractContentGeneric(msgMap["content"])
+			out = append(out, cloned)
 		case "assistant":
-			if toolCalls, ok := msgMap["tool_calls"].([]interface{}); ok && len(toolCalls) > 0 {
-				parts := make([]string, 0, len(toolCalls))
-				for _, call := range toolCalls {
-					callMap, ok := call.(map[string]interface{})
-					if !ok {
-						continue
-					}
-					fn, _ := callMap["function"].(map[string]interface{})
-					name, _ := fn["name"].(string)
-					args, _ := fn["arguments"].(string)
-					if name == "" {
-						name = "?"
-					}
-					if args == "" {
-						args = "{}"
-					}
-					parts = append(parts, fmt.Sprintf("Called tool: %s(%s)", name, args))
-				}
-				content := extractContentGeneric(msgMap["content"])
-				text := strings.Join(parts, "\n")
-				if content != "" {
-					text = content + "\n" + text
-				}
-				out = append(out, map[string]interface{}{
-					"role":    "assistant",
-					"content": text,
-				})
-				continue
+			// Pass assistant turns through verbatim (after flattening any
+			// content parts to text). tool_calls is preserved as-is so the
+			// server sees the canonical OpenAI structure rather than a
+			// "Called tool: ..." text reconstruction.
+			cloned := make(map[string]interface{}, len(msgMap))
+			for k, v := range msgMap {
+				cloned[k] = v
 			}
-			// Fall through to default — flatten content parts into a string.
-			fallthrough
+			cloned["content"] = extractContentGeneric(msgMap["content"])
+			out = append(out, cloned)
 		default:
 			// Qoder's chat endpoint expects `content` to be a plain string.
 			// Anthropic / OpenAI multipart format ([{type:"text",text:"..."}])
@@ -463,25 +439,6 @@ func normalizeQoderMessages(messages []interface{}) []interface{} {
 		}
 	}
 	return out
-}
-
-func hasToolHistory(messages []interface{}) bool {
-	for _, msg := range messages {
-		msgMap, ok := msg.(map[string]interface{})
-		if !ok {
-			continue
-		}
-		role, _ := msgMap["role"].(string)
-		if role == "tool" {
-			return true
-		}
-		if role == "assistant" {
-			if toolCalls, ok := msgMap["tool_calls"].([]interface{}); ok && len(toolCalls) > 0 {
-				return true
-			}
-		}
-	}
-	return false
 }
 
 func buildOpenAIChunk(inner map[string]interface{}, model string) ([]byte, error) {
