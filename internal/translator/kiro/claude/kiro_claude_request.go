@@ -20,104 +20,25 @@ import (
 // remoteWebSearchDescription is a minimal fallback for when dynamic fetch from MCP tools/list hasn't completed yet.
 const remoteWebSearchDescription = "WebSearch looks up information outside the model's training data. Supports multiple queries to gather comprehensive information."
 
-// Kiro API request structs - field order determines JSON key order
-
-// KiroPayload is the top-level request structure for Kiro API
-type KiroPayload struct {
-	ConversationState KiroConversationState `json:"conversationState"`
-	ProfileArn        string                `json:"profileArn,omitempty"`
-}
-
-// KiroConversationState holds the conversation context
-type KiroConversationState struct {
-	AgentContinuationID string               `json:"agentContinuationId,omitempty"`
-	AgentTaskType       string               `json:"agentTaskType,omitempty"`
-	ChatTriggerType     string               `json:"chatTriggerType"` // Required: "MANUAL"
-	ConversationID      string               `json:"conversationId"`
-	CurrentMessage      KiroCurrentMessage   `json:"currentMessage"`
-	History             []KiroHistoryMessage `json:"history,omitempty"`
-}
-
-// KiroCurrentMessage wraps the current user message
-type KiroCurrentMessage struct {
-	UserInputMessage KiroUserInputMessage `json:"userInputMessage"`
-}
-
-// KiroHistoryMessage represents a message in the conversation history
-type KiroHistoryMessage struct {
-	UserInputMessage         *KiroUserInputMessage         `json:"userInputMessage,omitempty"`
-	AssistantResponseMessage *KiroAssistantResponseMessage `json:"assistantResponseMessage,omitempty"`
-}
-
-// KiroImage represents an image in Kiro API format
-type KiroImage struct {
-	Format string          `json:"format"`
-	Source KiroImageSource `json:"source"`
-}
-
-// KiroImageSource contains the image data
-type KiroImageSource struct {
-	Bytes string `json:"bytes"` // base64 encoded image data
-}
-
-// KiroUserInputMessage represents a user message
-type KiroUserInputMessage struct {
-	Content                 string                       `json:"content"`
-	ModelID                 string                       `json:"modelId"`
-	Origin                  string                       `json:"origin"`
-	Images                  []KiroImage                  `json:"images,omitempty"`
-	UserInputMessageContext *KiroUserInputMessageContext `json:"userInputMessageContext,omitempty"`
-}
-
-// KiroUserInputMessageContext contains tool-related context
-type KiroUserInputMessageContext struct {
-	ToolResults []KiroToolResult  `json:"toolResults,omitempty"`
-	Tools       []KiroToolWrapper `json:"tools,omitempty"`
-}
-
-// KiroToolResult represents a tool execution result
-type KiroToolResult struct {
-	Content   []KiroTextContent `json:"content"`
-	Status    string            `json:"status"`
-	ToolUseID string            `json:"toolUseId"`
-}
-
-// KiroTextContent represents text content
-type KiroTextContent struct {
-	Text string `json:"text"`
-}
-
-// KiroToolWrapper wraps a tool specification
-type KiroToolWrapper struct {
-	ToolSpecification KiroToolSpecification `json:"toolSpecification"`
-}
-
-// KiroToolSpecification defines a tool's schema
-type KiroToolSpecification struct {
-	Name        string          `json:"name"`
-	Description string          `json:"description"`
-	InputSchema KiroInputSchema `json:"inputSchema"`
-}
-
-// KiroInputSchema wraps the JSON schema for tool input
-type KiroInputSchema struct {
-	JSON interface{} `json:"json"`
-}
-
-// KiroAssistantResponseMessage represents an assistant message
-type KiroAssistantResponseMessage struct {
-	Content  string        `json:"content"`
-	ToolUses []KiroToolUse `json:"toolUses,omitempty"`
-}
-
-// KiroToolUse represents a tool invocation by the assistant
-type KiroToolUse struct {
-	ToolUseID      string                 `json:"toolUseId"`
-	Name           string                 `json:"name"`
-	Input          map[string]interface{} `json:"input"`
-	IsTruncated    bool                   `json:"-"` // Set by truncation detector when enabled
-	TruncationInfo *TruncationInfo        `json:"-"` // Truncation details (nil when detector disabled)
-}
+// Kiro API request structs are defined in common; aliased here so existing
+// claude-package call sites keep working unchanged.
+type (
+	KiroPayload                  = kirocommon.KiroPayload
+	KiroConversationState        = kirocommon.KiroConversationState
+	KiroCurrentMessage           = kirocommon.KiroCurrentMessage
+	KiroHistoryMessage           = kirocommon.KiroHistoryMessage
+	KiroImage                    = kirocommon.KiroImage
+	KiroImageSource              = kirocommon.KiroImageSource
+	KiroUserInputMessage         = kirocommon.KiroUserInputMessage
+	KiroUserInputMessageContext  = kirocommon.KiroUserInputMessageContext
+	KiroToolResult               = kirocommon.KiroToolResult
+	KiroTextContent              = kirocommon.KiroTextContent
+	KiroToolWrapper              = kirocommon.KiroToolWrapper
+	KiroToolSpecification        = kirocommon.KiroToolSpecification
+	KiroInputSchema              = kirocommon.KiroInputSchema
+	KiroAssistantResponseMessage = kirocommon.KiroAssistantResponseMessage
+	KiroToolUse                  = kirocommon.KiroToolUse
+)
 
 // ConvertClaudeRequestToKiro converts a Claude API request to Kiro format.
 // This is the main entry point for request translation.
