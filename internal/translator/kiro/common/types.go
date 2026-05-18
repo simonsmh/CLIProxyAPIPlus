@@ -1,14 +1,9 @@
 // Package common holds the shared Kiro request/response payload types
 // used by both the claude- and openai-format request builders.
-//
-// These types model the AWS Amazon Q `conversationState` wire format
-// (which is what Kiro talks to) and were previously duplicated verbatim
-// in `internal/translator/kiro/claude` and `internal/translator/kiro/openai`.
-// Sharing them here keeps the two builders structurally aligned and
-// guarantees the JSON shape stays in sync.
+// These types model the AWS Amazon Q `conversationState` wire format.
 package common
 
-// Kiro API request structs - field order determines JSON key order.
+// Kiro API request structs.
 
 // KiroPayload is the top-level request structure for Kiro API.
 type KiroPayload struct {
@@ -99,11 +94,8 @@ type KiroAssistantResponseMessage struct {
 }
 
 // KiroToolUse represents a tool invocation by the assistant.
-//
-// IsTruncated and TruncationInfo are populated by the claude-side
-// truncation detector when enabled; they are JSON-skipped runtime
-// fields. The OpenAI-side request builder leaves them at their zero
-// values, so the wire format is identical regardless of caller.
+// IsTruncated and TruncationInfo are JSON-skipped runtime fields
+// populated by the truncation detector.
 type KiroToolUse struct {
 	ToolUseID      string                 `json:"toolUseId"`
 	Name           string                 `json:"name"`
@@ -112,12 +104,8 @@ type KiroToolUse struct {
 	TruncationInfo *TruncationInfo        `json:"-"`
 }
 
-// TruncationInfo contains details about detected truncation in a tool
-// use event. Populated by the claude-side truncation detector; defined
-// here because KiroToolUse needs to reference it.
-//
-// The detection logic itself lives in
-// internal/translator/kiro/claude/truncation_detector.go.
+// TruncationInfo contains details about detected truncation in a tool use event.
+// The detection logic lives in internal/translator/kiro/claude/truncation_detector.go.
 type TruncationInfo struct {
 	IsTruncated    bool              // Whether truncation was detected
 	TruncationType string            // Type of truncation detected

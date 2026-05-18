@@ -6,7 +6,6 @@ package claude
 import (
 	"encoding/json"
 	"fmt"
-	"net/http"
 	"strings"
 	"time"
 	"unicode/utf8"
@@ -19,8 +18,6 @@ import (
 )
 
 
-// Kiro API request structs are defined in common; aliased here so existing
-// claude-package call sites keep working unchanged.
 type (
 	KiroPayload                  = kirocommon.KiroPayload
 	KiroConversationState        = kirocommon.KiroConversationState
@@ -53,11 +50,8 @@ func ConvertClaudeRequestToKiro(modelName string, inputRawJSON []byte, stream bo
 // origin parameter determines which quota to use: "CLI" for Amazon Q, "AI_EDITOR" for Kiro IDE.
 // isAgentic parameter enables chunked write optimization prompt for -agentic model variants.
 // isChatOnly parameter disables tool calling for -chat model variants (pure conversation mode).
-// headers parameter allows checking Anthropic-Beta header for thinking mode detection.
-// metadata parameter is kept for API compatibility but no longer used for thinking configuration.
-// Supports thinking mode - when enabled, injects thinking tags into system prompt.
-// Returns the payload and a boolean indicating whether thinking mode was injected.
-func BuildKiroPayload(claudeBody []byte, modelID, profileArn, origin string, isAgentic, isChatOnly bool, headers http.Header, metadata map[string]any) ([]byte, bool) {
+// Returns the serialized Kiro API request payload.
+func BuildKiroPayload(claudeBody []byte, modelID, profileArn, origin string, isAgentic, isChatOnly bool) []byte {
 	log.Debugf("kiro: BuildKiroPayload called, modelID=%s, origin=%s, isAgentic=%v, isChatOnly=%v", modelID, origin, isAgentic, isChatOnly)
 
 	// Normalize origin value for Kiro API compatibility
@@ -75,18 +69,7 @@ func BuildKiroPayload(claudeBody []byte, modelID, profileArn, origin string, isA
 	// Extract system prompt
 	systemPrompt := extractSystemPrompt(claudeBody)
 
-	// Early exit: if system prompt injection is disabled, drop the client system prompt
-	// immediately to avoid unnecessary string building (timestamp, agentic, thinking tags, etc.)
-	if !kirocommon.IsSystemPromptInjectEnabled() {
-		if systemPrompt != "" {
-			log.Debugf("kiro: system prompt injection disabled, dropping system prompt (len=%d)", len(systemPrompt))
-		}
-		systemPrompt = ""
-	}
 
-	// Check for thinking mode using the comprehensive IsThinkingEnabledWithHeaders function
-	// This supports Claude API format, OpenAI reasoning_effort, AMP/Cursor format, and Anthropic-Beta header
-	thinkingEnabled := IsThinkingEnabledWithHeaders(claudeBody, headers)
 
 	// Inject timestamp context
 	timestamp := time.Now().Format("2006-01-02 15:04:05 MST")
@@ -123,12 +106,6 @@ func BuildKiroPayload(claudeBody []byte, modelID, profileArn, origin string, isA
 	for i, t := range kiroTools {
 		log.Debugf("kiro: tool[%d]: name=%s", i, t.ToolSpecification.Name)
 	}
-
-	// `thinkingEnabled` is computed for the executor's streaming-side
-	// gating decisions (response shape varies between models that emit
-	// reasoningContentEvent and those that don't). Q's server picks
-	// reasoning behavior from the model itself; there is no client-side
-	// switch that turns it on or off, so we don't inject anything here.
 
 	// Process messages and build history
 	history, currentUserMsg, currentToolResults := processMessages(messages, modelID, origin)
@@ -175,16 +152,12 @@ func BuildKiroPayload(claudeBody []byte, modelID, profileArn, origin string, isA
 		currentMessage = KiroCurrentMessage{UserInputMessage: *currentUserMsg}
 	} else {
 		fallbackContent := ""
-		if systemPrompt != "" && kirocommon.IsSystemPromptInjectEnabled() {
-			fallbackContent = "--- SYSTEM PROMPT ---\n" + systemPrompt + "\n--- END SYSTEM PROMPT ---\n"
-			log.Debugf("kiro: system prompt injected into fallback user message (len=%d)", len(systemPrompt))
-		} else if systemPrompt != "" {
-			log.Debugf("kiro: system prompt dropped (inject disabled, len=%d)", len(systemPrompt))
+		if systemPrompt != "" {
+			fallbackContent = systemPrompt
 		} else {
 			log.Debugf("kiro: no system prompt present in fallback user message")
 		}
 		// CRITICAL: Kiro API requires non-empty content for currentMessage.
-		// When system prompt injection is disabled, fallbackContent is empty.
 		// Use DefaultUserContent to avoid "Improperly formed request" 400 error.
 		if strings.TrimSpace(fallbackContent) == "" {
 			fallbackContent = kirocommon.DefaultUserContent
@@ -223,10 +196,10 @@ func BuildKiroPayload(claudeBody []byte, modelID, profileArn, origin string, isA
 	result, err := json.Marshal(payload)
 	if err != nil {
 		log.Debugf("kiro: failed to marshal payload: %v", err)
-		return nil, false
+		return nil
 	}
 
-	return result, thinkingEnabled
+	return result
 }
 
 // extractSystemPrompt extracts system prompt from Claude request
@@ -246,138 +219,9 @@ func extractSystemPrompt(claudeBody []byte) string {
 	return systemField.String()
 }
 
-// checkThinkingMode checks if thinking mode is enabled in the Claude request
-func checkThinkingMode(claudeBody []byte) (bool, int64) {
-	thinkingEnabled := false
-	var budgetTokens int64 = 24000
 
-	thinkingField := gjson.GetBytes(claudeBody, "thinking")
-	if thinkingField.Exists() {
-		thinkingType := thinkingField.Get("type").String()
-		if thinkingType == "enabled" {
-			thinkingEnabled = true
-			if bt := thinkingField.Get("budget_tokens"); bt.Exists() {
-				budgetTokens = bt.Int()
-				if budgetTokens <= 0 {
-					thinkingEnabled = false
-					log.Debugf("kiro: thinking mode disabled via budget_tokens <= 0")
-				}
-			}
-			if thinkingEnabled {
-				log.Debugf("kiro: thinking mode enabled via Claude API parameter, budget_tokens: %d", budgetTokens)
-			}
-		}
-	}
 
-	return thinkingEnabled, budgetTokens
-}
 
-// IsThinkingEnabledFromHeader checks if thinking mode is enabled via Anthropic-Beta header.
-// Claude CLI uses "Anthropic-Beta: interleaved-thinking-2025-05-14" to enable thinking.
-func IsThinkingEnabledFromHeader(headers http.Header) bool {
-	if headers == nil {
-		return false
-	}
-	betaHeader := headers.Get("Anthropic-Beta")
-	if betaHeader == "" {
-		return false
-	}
-	// Check for interleaved-thinking beta feature
-	if strings.Contains(betaHeader, "interleaved-thinking") {
-		log.Debugf("kiro: thinking mode enabled via Anthropic-Beta header: %s", betaHeader)
-		return true
-	}
-	return false
-}
-
-// IsThinkingEnabled is a public wrapper to check if thinking mode is enabled.
-// This is used by the executor to determine whether to parse <thinking> tags in responses.
-// When thinking is NOT enabled in the request, <thinking> tags in responses should be
-// treated as regular text content, not as thinking blocks.
-//
-// Supports multiple formats:
-// - Claude API format: thinking.type = "enabled"
-// - OpenAI format: reasoning_effort parameter
-// - AMP/Cursor format: <thinking_mode>interleaved</thinking_mode> in system prompt
-func IsThinkingEnabled(body []byte) bool {
-	return IsThinkingEnabledWithHeaders(body, nil)
-}
-
-// IsThinkingEnabledWithHeaders checks if thinking mode is enabled from body or headers.
-// This is the comprehensive check that supports all thinking detection methods:
-// - Claude API format: thinking.type = "enabled"
-// - OpenAI format: reasoning_effort parameter
-// - AMP/Cursor format: <thinking_mode>interleaved</thinking_mode> in system prompt
-// - Anthropic-Beta header: interleaved-thinking-2025-05-14
-func IsThinkingEnabledWithHeaders(body []byte, headers http.Header) bool {
-	// Check Anthropic-Beta header first (Claude Code uses this)
-	if IsThinkingEnabledFromHeader(headers) {
-		return true
-	}
-
-	// Check Claude API format first (thinking.type = "enabled")
-	enabled, _ := checkThinkingMode(body)
-	if enabled {
-		log.Debugf("kiro: IsThinkingEnabled returning true (Claude API format)")
-		return true
-	}
-
-	// Check OpenAI format: reasoning_effort parameter
-	// Valid values: "low", "medium", "high", "auto" (not "none")
-	reasoningEffort := gjson.GetBytes(body, "reasoning_effort")
-	if reasoningEffort.Exists() {
-		effort := reasoningEffort.String()
-		if effort != "" && effort != "none" {
-			log.Debugf("kiro: thinking mode enabled via OpenAI reasoning_effort: %s", effort)
-			return true
-		}
-	}
-
-	// Check AMP/Cursor format: <thinking_mode>interleaved</thinking_mode> in system prompt
-	// This is how AMP client passes thinking configuration
-	bodyStr := string(body)
-	if strings.Contains(bodyStr, "<thinking_mode>") && strings.Contains(bodyStr, "</thinking_mode>") {
-		// Extract thinking mode value
-		startTag := "<thinking_mode>"
-		endTag := "</thinking_mode>"
-		startIdx := strings.Index(bodyStr, startTag)
-		if startIdx >= 0 {
-			startIdx += len(startTag)
-			endIdx := strings.Index(bodyStr[startIdx:], endTag)
-			if endIdx >= 0 {
-				thinkingMode := bodyStr[startIdx : startIdx+endIdx]
-				if thinkingMode == "interleaved" || thinkingMode == "enabled" {
-					log.Debugf("kiro: thinking mode enabled via AMP/Cursor format: %s", thinkingMode)
-					return true
-				}
-			}
-		}
-	}
-
-	// Check OpenAI format: max_completion_tokens with reasoning (o1-style)
-	// Some clients use this to indicate reasoning mode
-	if gjson.GetBytes(body, "max_completion_tokens").Exists() {
-		// If max_completion_tokens is set, check if model name suggests reasoning
-		model := gjson.GetBytes(body, "model").String()
-		if strings.Contains(strings.ToLower(model), "thinking") ||
-			strings.Contains(strings.ToLower(model), "reason") {
-			log.Debugf("kiro: thinking mode enabled via model name hint: %s", model)
-			return true
-		}
-	}
-
-	// Check model name directly for thinking hints.
-	// This enables thinking variants even when clients don't send explicit thinking fields.
-	model := strings.TrimSpace(gjson.GetBytes(body, "model").String())
-	modelLower := strings.ToLower(model)
-	if strings.Contains(modelLower, "thinking") || strings.Contains(modelLower, "-reason") {
-		log.Debugf("kiro: thinking mode enabled via model name hint: %s", model)
-		return true
-	}
-
-	log.Debugf("kiro: IsThinkingEnabled returning false (no thinking mode detected)")
-	return false
-}
 
 // convertClaudeToolsToKiro converts Claude tools to Kiro format
 func convertClaudeToolsToKiro(tools gjson.Result) []KiroToolWrapper {
@@ -567,15 +411,9 @@ func processMessages(messages gjson.Result, modelID, origin string) ([]KiroHisto
 func buildFinalContent(content, systemPrompt string, toolResults []KiroToolResult) string {
 	var contentBuilder strings.Builder
 
-	if systemPrompt != "" && kirocommon.IsSystemPromptInjectEnabled() {
-		contentBuilder.WriteString("--- SYSTEM PROMPT ---\n")
+	if systemPrompt != "" {
 		contentBuilder.WriteString(systemPrompt)
-		contentBuilder.WriteString("\n--- END SYSTEM PROMPT ---\n\n")
-		log.Debugf("kiro: system prompt injected into user message content (len=%d)", len(systemPrompt))
-	} else if systemPrompt != "" {
-		log.Debugf("kiro: system prompt dropped (inject disabled, len=%d)", len(systemPrompt))
-	} else {
-		log.Debugf("kiro: no system prompt present")
+		contentBuilder.WriteString("\n\n")
 	}
 
 	contentBuilder.WriteString(content)

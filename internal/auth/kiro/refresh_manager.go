@@ -6,7 +6,6 @@ import (
 	"time"
 
 	"github.com/router-for-me/CLIProxyAPI/v7/internal/config"
-	kirocommon "github.com/router-for-me/CLIProxyAPI/v7/internal/translator/kiro/common"
 	"github.com/router-for-me/CLIProxyAPI/v7/internal/util"
 	log "github.com/sirupsen/logrus"
 )
@@ -193,110 +192,6 @@ func initGlobalFingerprintConfig(cfg *config.Config) {
 // InitFingerprintConfig initializes the global fingerprint config from application config.
 func InitFingerprintConfig(cfg *config.Config) {
 	initGlobalFingerprintConfig(cfg)
-}
-
-// InitSystemPromptInjectConfig applies the kiro-system-prompt-inject-enable setting.
-// When the config value is true, Kiro translators wrap system prompts with
-// --- SYSTEM PROMPT --- markers and inject them into user messages.
-// When nil or false (default), system prompts are dropped entirely.
-func InitSystemPromptInjectConfig(cfg *config.Config) {
-	enabled := false
-	if cfg != nil && cfg.KiroSystemPromptInjectEnable != nil {
-		enabled = *cfg.KiroSystemPromptInjectEnable
-	}
-	kirocommon.SetSystemPromptInjectEnabled(enabled)
-	if enabled {
-		log.Info("kiro: system prompt injection enabled")
-	} else {
-		log.Info("kiro: system prompt injection disabled (default) — system prompts will be dropped")
-	}
-}
-
-// InitTruncationDetectorConfig applies the kiro-truncation-detector-enable setting.
-// When the config value is true, Kiro tool use responses are checked for truncation
-// heuristics and incomplete tool calls are silently skipped.
-// When nil or false (default), all tool use responses pass through unmodified.
-func InitTruncationDetectorConfig(cfg *config.Config) {
-	enabled := false
-	if cfg != nil && cfg.KiroTruncationDetectorEnable != nil {
-		enabled = *cfg.KiroTruncationDetectorEnable
-	}
-	kirocommon.SetTruncationDetectorEnabled(enabled)
-	if enabled {
-		log.Info("kiro: truncation detector enabled")
-	} else {
-		log.Info("kiro: truncation detector disabled (default)")
-	}
-}
-
-// InitExtractThinkingTagConfig applies the kiro-extract-thinking-tag-enable setting.
-// When true, inline <thinking>...</thinking> tags in Kiro assistantResponseEvent
-// content are parsed into Claude thinking blocks (streaming and non-streaming).
-// When nil or false (default), content is passed through as plain text and
-// reasoning is expected to arrive via reasoningContentEvent only.
-func InitExtractThinkingTagConfig(cfg *config.Config) {
-	enabled := false
-	if cfg != nil && cfg.KiroExtractThinkingTagEnable != nil {
-		enabled = *cfg.KiroExtractThinkingTagEnable
-	}
-	kirocommon.SetExtractThinkingTagEnabled(enabled)
-	if enabled {
-		log.Info("kiro: inline <thinking> tag extraction enabled")
-	} else {
-		log.Info("kiro: inline <thinking> tag extraction disabled (default)")
-	}
-}
-
-// InitRateLimiterConfig initializes the global rate limiter config from application config.
-// Must be called before any Kiro requests are made for the config to take effect.
-func InitRateLimiterConfig(cfg *config.Config) {
-	if cfg == nil || cfg.KiroRateLimit == nil {
-		SetGlobalRateLimiterConfig(nil)
-		return
-	}
-
-	rlCfg := &RateLimiterConfig{}
-	krl := cfg.KiroRateLimit
-
-	if krl.Enabled != nil {
-		rlCfg.Enabled = krl.Enabled
-	}
-	if krl.MinTokenInterval != "" {
-		if d, err := time.ParseDuration(krl.MinTokenInterval); err == nil && d > 0 {
-			rlCfg.MinTokenInterval = d
-		}
-	}
-	if krl.MaxTokenInterval != "" {
-		if d, err := time.ParseDuration(krl.MaxTokenInterval); err == nil && d > 0 {
-			rlCfg.MaxTokenInterval = d
-		}
-	}
-	if krl.DailyMaxRequests > 0 {
-		rlCfg.DailyMaxRequests = krl.DailyMaxRequests
-	}
-	if krl.JitterPercent > 0 {
-		rlCfg.JitterPercent = krl.JitterPercent
-	}
-	if krl.BackoffBase != "" {
-		if d, err := time.ParseDuration(krl.BackoffBase); err == nil && d > 0 {
-			rlCfg.BackoffBase = d
-		}
-	}
-	if krl.BackoffMax != "" {
-		if d, err := time.ParseDuration(krl.BackoffMax); err == nil && d > 0 {
-			rlCfg.BackoffMax = d
-		}
-	}
-	if krl.BackoffMultiplier > 0 {
-		rlCfg.BackoffMultiplier = krl.BackoffMultiplier
-	}
-	if krl.SuspendCooldown != "" {
-		if d, err := time.ParseDuration(krl.SuspendCooldown); err == nil && d > 0 {
-			rlCfg.SuspendCooldown = d
-		}
-	}
-
-	SetGlobalRateLimiterConfig(rlCfg)
 }
 
 // StopGlobalRefreshManager stops the global refresh manager.

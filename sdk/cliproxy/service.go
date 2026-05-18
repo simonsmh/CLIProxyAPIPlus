@@ -20,7 +20,6 @@ import (
 	"github.com/router-for-me/CLIProxyAPI/v7/internal/redisqueue"
 	"github.com/router-for-me/CLIProxyAPI/v7/internal/registry"
 	"github.com/router-for-me/CLIProxyAPI/v7/internal/runtime/executor"
-	kirocommon "github.com/router-for-me/CLIProxyAPI/v7/internal/translator/kiro/common"
 	internalusage "github.com/router-for-me/CLIProxyAPI/v7/internal/usage"
 	"github.com/router-for-me/CLIProxyAPI/v7/internal/util"
 	"github.com/router-for-me/CLIProxyAPI/v7/internal/watcher"
@@ -446,13 +445,6 @@ func newDefaultAuthManager() *sdkAuth.Manager {
 		sdkAuth.NewXAIAuthenticator(),
 		sdkAuth.NewGitLabAuthenticator(),
 	)
-}
-
-func applyKiroRuntimeConfig(cfg *config.Config) {
-	kiroauth.InitRateLimiterConfig(cfg)
-	kiroauth.InitSystemPromptInjectConfig(cfg)
-	kiroauth.InitTruncationDetectorConfig(cfg)
-	kiroauth.InitExtractThinkingTagConfig(cfg)
 }
 
 func (s *Service) ensureAuthUpdateQueue(ctx context.Context) {
@@ -1481,7 +1473,6 @@ func (s *Service) Run(ctx context.Context) error {
 	}
 
 	s.applyRetryConfig(s.cfg)
-	applyKiroRuntimeConfig(s.cfg)
 
 	s.registerPluginAuthParser()
 	if s.coreManager != nil && !homeEnabled {
@@ -1870,11 +1861,6 @@ func (s *Service) registerModelsForAuth(ctx context.Context, a *coreauth.Auth) {
 		models = applyExcludedModels(models, excluded)
 	case "kiro":
 		models = s.fetchKiroModels(a)
-		// Filter out agentic variants when system prompt injection is disabled,
-		// since the agentic prompt is delivered through system prompt injection.
-		if !kirocommon.IsSystemPromptInjectEnabled() {
-			models = filterAgenticVariants(models)
-		}
 		models = applyExcludedModels(models, excluded)
 	case "kilo":
 		models = executor.FetchKiloModels(context.Background(), a, s.cfg)
@@ -2740,34 +2726,15 @@ func formatKiroDisplayName(modelName string, rateMultiplier float64) string {
 	return displayName
 }
 
-// filterAgenticVariants removes -agentic model variants from the list.
-// Used when system prompt injection is disabled, since the agentic prompt
-// is delivered via system prompt injection and would have no effect.
-func filterAgenticVariants(models []*ModelInfo) []*ModelInfo {
-	result := make([]*ModelInfo, 0, len(models))
-	for _, m := range models {
-		if m != nil && strings.HasSuffix(m.ID, "-agentic") {
-			continue
-		}
-		result = append(result, m)
-	}
-	return result
-}
-
-// generateKiroAgenticVariants generates agentic variants for Kiro models.
-// Agentic variants share the backend model ID but apply a wrapped system
-// prompt for coding agents — that wrapping only happens when
-// kiro-system-prompt-inject-enable is on. When it's off, exposing "-agentic"
-// IDs in /v1/models is misleading (the flag gates the actual behavior), so
-// we return the input list unchanged.
+// generateKiroAgenticVariants generates -agentic suffixed variants for Kiro models.
+// Agentic variants share the backend model ID but apply the chunked-write
+// optimization system prompt for coding agents.
 func generateKiroAgenticVariants(models []*ModelInfo) []*ModelInfo {
 	if len(models) == 0 {
 		return models
 	}
 
-	if !kirocommon.IsSystemPromptInjectEnabled() {
-		return models
-	}
+
 
 	result := make([]*ModelInfo, 0, len(models)*2)
 	result = append(result, models...)

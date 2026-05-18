@@ -45,20 +45,13 @@ func BuildClaudeResponse(content string, toolUses []KiroToolUse, model string, u
 	var contentBlocks []map[string]interface{}
 
 	if content != "" {
-		if kirocommon.IsExtractThinkingTagEnabled() {
-			blocks := ExtractThinkingFromContent(content)
-			contentBlocks = append(contentBlocks, blocks...)
-			for _, block := range blocks {
-				if block["type"] == "thinking" {
-					thinkingContent := block["thinking"].(string)
-					log.Infof("kiro: buildClaudeResponse extracted thinking block (len: %d)", len(thinkingContent))
-				}
+		blocks := ExtractThinkingFromContent(content)
+		contentBlocks = append(contentBlocks, blocks...)
+		for _, block := range blocks {
+			if block["type"] == "thinking" {
+				thinkingContent := block["thinking"].(string)
+				log.Infof("kiro: buildClaudeResponse extracted thinking block (len: %d)", len(thinkingContent))
 			}
-		} else {
-			contentBlocks = append(contentBlocks, map[string]interface{}{
-				"type": "text",
-				"text": content,
-			})
 		}
 	}
 

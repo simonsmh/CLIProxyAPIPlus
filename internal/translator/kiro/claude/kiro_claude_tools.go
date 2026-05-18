@@ -481,15 +481,13 @@ func ProcessToolUseEvent(event map[string]interface{}, currentToolUse *ToolUseSt
 			Input:     finalInput,
 		}
 
-		// Run truncation detection only when explicitly enabled.
-		if kirocommon.IsTruncationDetectorEnabled() {
-			truncInfo := DetectTruncation(currentToolUse.Name, currentToolUse.ToolUseID, fullInput, finalInput)
-			if truncInfo.IsTruncated {
-				log.Warnf("kiro: truncation detected for tool %s (ID: %s): type=%s, raw_size=%d bytes",
-					currentToolUse.Name, currentToolUse.ToolUseID, truncInfo.TruncationType, len(fullInput))
-				toolUse.IsTruncated = true
-				toolUse.TruncationInfo = &truncInfo
-			}
+		// Run truncation detection.
+		truncInfo := DetectTruncation(currentToolUse.Name, currentToolUse.ToolUseID, fullInput, finalInput)
+		if truncInfo.IsTruncated {
+			log.Warnf("kiro: truncation detected for tool %s (ID: %s): type=%s, raw_size=%d bytes",
+				currentToolUse.Name, currentToolUse.ToolUseID, truncInfo.TruncationType, len(fullInput))
+			toolUse.IsTruncated = true
+			toolUse.TruncationInfo = &truncInfo
 		}
 
 		toolUses = append(toolUses, toolUse)

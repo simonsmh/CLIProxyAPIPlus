@@ -1,8 +1,6 @@
 // Package common provides shared constants and utilities for Kiro translator.
 package common
 
-import "sync/atomic"
-
 const (
 	// KiroMaxToolDescLen is the maximum description length for Kiro API tools.
 	// Kiro API limit is 10240 bytes, leave room for "..."
@@ -102,78 +100,3 @@ You MUST follow these rules for ALL file operations. Violation causes server tim
 REMEMBER: When in doubt, write LESS per operation. Multiple small operations > one large operation.`
 )
 
-// systemPromptInjectEnabled controls whether system prompts are wrapped with
-// --- SYSTEM PROMPT --- markers and injected into Kiro user messages.
-// Default: 0 (disabled). Set to 1 to inject wrapped system prompts.
-var systemPromptInjectEnabled atomic.Int32
-
-func init() {
-	systemPromptInjectEnabled.Store(0)
-}
-
-// SetSystemPromptInjectEnabled configures whether system prompts should be
-// injected into Kiro user messages. When false, system prompts are dropped
-// entirely — Kiro API will not see any system instructions.
-func SetSystemPromptInjectEnabled(enabled bool) {
-	if enabled {
-		systemPromptInjectEnabled.Store(1)
-	} else {
-		systemPromptInjectEnabled.Store(0)
-	}
-}
-
-// IsSystemPromptInjectEnabled reports whether system prompt injection is active.
-func IsSystemPromptInjectEnabled() bool {
-	return systemPromptInjectEnabled.Load() == 1
-}
-
-// truncationDetectorEnabled controls whether the heuristic truncation detector
-// is applied to Kiro tool use responses. When enabled, tool calls that appear
-// truncated (invalid JSON, missing required fields, etc.) are silently skipped.
-// Default: 0 (disabled). The detector uses heuristic matching that can produce
-// false positives (e.g. code fence counting), so it is off by default.
-var truncationDetectorEnabled atomic.Int32
-
-func init() {
-	truncationDetectorEnabled.Store(0)
-}
-
-// SetTruncationDetectorEnabled toggles the heuristic truncation detector.
-func SetTruncationDetectorEnabled(enabled bool) {
-	if enabled {
-		truncationDetectorEnabled.Store(1)
-	} else {
-		truncationDetectorEnabled.Store(0)
-	}
-}
-
-// IsTruncationDetectorEnabled reports whether the truncation detector is active.
-func IsTruncationDetectorEnabled() bool {
-	return truncationDetectorEnabled.Load() == 1
-}
-
-// extractThinkingTagEnabled controls whether inline <thinking>...</thinking>
-// tags inside assistantResponseEvent content are parsed into Claude thinking
-// blocks. This is an unofficial path — Kiro's official reasoning signal is
-// reasoningContentEvent. The tag parser can false-positive when content
-// literally mentions the tag string (code samples, discussion, XML fixtures),
-// which silently truncates responses. Default: 0 (disabled).
-var extractThinkingTagEnabled atomic.Int32
-
-func init() {
-	extractThinkingTagEnabled.Store(0)
-}
-
-// SetExtractThinkingTagEnabled toggles inline <thinking> tag extraction.
-func SetExtractThinkingTagEnabled(enabled bool) {
-	if enabled {
-		extractThinkingTagEnabled.Store(1)
-	} else {
-		extractThinkingTagEnabled.Store(0)
-	}
-}
-
-// IsExtractThinkingTagEnabled reports whether inline <thinking> tag extraction is active.
-func IsExtractThinkingTagEnabled() bool {
-	return extractThinkingTagEnabled.Load() == 1
-}

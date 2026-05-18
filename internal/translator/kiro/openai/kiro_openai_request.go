@@ -6,21 +6,17 @@ package openai
 import (
 	"encoding/json"
 	"fmt"
-	"net/http"
 	"strings"
 	"time"
 	"unicode/utf8"
 
 	"github.com/google/uuid"
 	"github.com/router-for-me/CLIProxyAPI/v7/internal/thinking"
-	kiroclaude "github.com/router-for-me/CLIProxyAPI/v7/internal/translator/kiro/claude"
 	kirocommon "github.com/router-for-me/CLIProxyAPI/v7/internal/translator/kiro/common"
 	log "github.com/sirupsen/logrus"
 	"github.com/tidwall/gjson"
 )
 
-// Kiro API request structs are defined in common; aliased here so existing
-// openai-package call sites keep working unchanged.
 type (
 	KiroPayload                  = kirocommon.KiroPayload
 	KiroConversationState        = kirocommon.KiroConversationState
@@ -53,10 +49,8 @@ func ConvertOpenAIRequestToKiro(modelName string, inputRawJSON []byte, stream bo
 // origin parameter determines which quota to use: "CLI" for Amazon Q, "AI_EDITOR" for Kiro IDE.
 // isAgentic parameter enables chunked write optimization prompt for -agentic model variants.
 // isChatOnly parameter disables tool calling for -chat model variants (pure conversation mode).
-// headers parameter allows checking Anthropic-Beta header for thinking mode detection.
-// metadata parameter is kept for API compatibility but no longer used for thinking configuration.
-// Returns the payload and a boolean indicating whether thinking mode was injected.
-func BuildKiroPayloadFromOpenAI(openaiBody []byte, modelID, profileArn, origin string, isAgentic, isChatOnly bool, headers http.Header, metadata map[string]any) ([]byte, bool) {
+// Returns the serialized Kiro API request payload.
+func BuildKiroPayloadFromOpenAI(openaiBody []byte, modelID, profileArn, origin string, isAgentic, isChatOnly bool) []byte {
 	log.Debugf("kiro-openai: BuildKiroPayloadFromOpenAI called, modelID=%s, origin=%s, isAgentic=%v, isChatOnly=%v", modelID, origin, isAgentic, isChatOnly)
 
 	// Normalize origin value for Kiro API compatibility
@@ -74,14 +68,7 @@ func BuildKiroPayloadFromOpenAI(openaiBody []byte, modelID, profileArn, origin s
 	// Extract system prompt from messages
 	systemPrompt := extractSystemPromptFromOpenAI(messages)
 
-	// Early exit: if system prompt injection is disabled, drop the client system prompt
-	// immediately to avoid unnecessary string building (timestamp, agentic, thinking tags, etc.)
-	if !kirocommon.IsSystemPromptInjectEnabled() {
-		if systemPrompt != "" {
-			log.Debugf("kiro-openai: system prompt injection disabled, dropping system prompt (len=%d)", len(systemPrompt))
-		}
-		systemPrompt = ""
-	}
+
 
 	// Inject timestamp context
 	timestamp := time.Now().Format("2006-01-02 15:04:05 MST")
@@ -123,21 +110,12 @@ func BuildKiroPayloadFromOpenAI(openaiBody []byte, modelID, profileArn, origin s
 		log.Debugf("kiro-openai: injected response_format hint into system prompt")
 	}
 
-	// Check for thinking mode
-	// Supports OpenAI reasoning_effort parameter, model name hints, and Anthropic-Beta header
-	thinkingEnabled := checkThinkingModeFromOpenAIWithHeaders(openaiBody, headers)
-
 	// Convert OpenAI tools to Kiro format
 	kiroTools := convertOpenAIToolsToKiro(tools)
 	log.Infof("kiro-openai: tools conversion: input_exist=%v, output_count=%d", tools.IsArray(), len(kiroTools))
 	for i, t := range kiroTools {
 		log.Debugf("kiro-openai: tool[%d]: name=%s", i, t.ToolSpecification.Name)
 	}
-
-	// `thinkingEnabled` is computed for the executor's streaming-side
-	// gating decisions. See the matching note in the claude-format
-	// builder — Q's server picks reasoning behavior from the model
-	// itself, so we don't inject anything here.
 
 	// Process messages and build history
 	history, currentUserMsg, currentToolResults := processOpenAIMessages(messages, modelID, origin)
@@ -173,16 +151,12 @@ func BuildKiroPayloadFromOpenAI(openaiBody []byte, modelID, profileArn, origin s
 		currentMessage = KiroCurrentMessage{UserInputMessage: *currentUserMsg}
 	} else {
 		fallbackContent := ""
-		if systemPrompt != "" && kirocommon.IsSystemPromptInjectEnabled() {
-			fallbackContent = "--- SYSTEM PROMPT ---\n" + systemPrompt + "\n--- END SYSTEM PROMPT ---\n"
-			log.Debugf("kiro-openai: system prompt injected into fallback user message (len=%d)", len(systemPrompt))
-		} else if systemPrompt != "" {
-			log.Debugf("kiro-openai: system prompt dropped (inject disabled, len=%d)", len(systemPrompt))
+		if systemPrompt != "" {
+			fallbackContent = systemPrompt
 		} else {
 			log.Debugf("kiro-openai: no system prompt present in fallback user message")
 		}
 		// CRITICAL: Kiro API requires non-empty content for currentMessage.
-		// When system prompt injection is disabled, fallbackContent is empty.
 		// Use DefaultUserContent to avoid "Improperly formed request" 400 error.
 		if strings.TrimSpace(fallbackContent) == "" {
 			fallbackContent = kirocommon.DefaultUserContent
@@ -221,10 +195,10 @@ func BuildKiroPayloadFromOpenAI(openaiBody []byte, modelID, profileArn, origin s
 	result, err := json.Marshal(payload)
 	if err != nil {
 		log.Debugf("kiro-openai: failed to marshal payload: %v", err)
-		return nil, false
+		return nil
 	}
 
-	return result, thinkingEnabled
+	return result
 }
 
 // extractSystemPromptFromOpenAI extracts system prompt from OpenAI messages
@@ -747,15 +721,9 @@ func buildAssistantMessageFromOpenAI(msg gjson.Result) KiroAssistantResponseMess
 func buildFinalContent(content, systemPrompt string, toolResults []KiroToolResult) string {
 	var contentBuilder strings.Builder
 
-	if systemPrompt != "" && kirocommon.IsSystemPromptInjectEnabled() {
-		contentBuilder.WriteString("--- SYSTEM PROMPT ---\n")
+	if systemPrompt != "" {
 		contentBuilder.WriteString(systemPrompt)
-		contentBuilder.WriteString("\n--- END SYSTEM PROMPT ---\n\n")
-		log.Debugf("kiro-openai: system prompt injected into user message content (len=%d)", len(systemPrompt))
-	} else if systemPrompt != "" {
-		log.Debugf("kiro-openai: system prompt dropped (inject disabled, len=%d)", len(systemPrompt))
-	} else {
-		log.Debugf("kiro-openai: no system prompt present")
+		contentBuilder.WriteString("\n\n")
 	}
 
 	contentBuilder.WriteString(content)
@@ -774,71 +742,7 @@ func buildFinalContent(content, systemPrompt string, toolResults []KiroToolResul
 	return finalContent
 }
 
-// checkThinkingModeFromOpenAI checks if thinking mode is enabled in the OpenAI request.
-// Returns thinkingEnabled.
-// Supports:
-// - reasoning_effort parameter (low/medium/high/auto)
-// - Model name containing "thinking" or "reason"
-// - <thinking_mode> tag in system prompt (AMP/Cursor format)
-func checkThinkingModeFromOpenAI(openaiBody []byte) bool {
-	return checkThinkingModeFromOpenAIWithHeaders(openaiBody, nil)
-}
 
-// checkThinkingModeFromOpenAIWithHeaders checks if thinking mode is enabled in the OpenAI request.
-// Returns thinkingEnabled.
-// Supports:
-// - Anthropic-Beta header with interleaved-thinking (Claude CLI)
-// - reasoning_effort parameter (low/medium/high/auto)
-// - Model name containing "thinking" or "reason"
-// - <thinking_mode> tag in system prompt (AMP/Cursor format)
-func checkThinkingModeFromOpenAIWithHeaders(openaiBody []byte, headers http.Header) bool {
-	// Check Anthropic-Beta header first (Claude CLI uses this)
-	if kiroclaude.IsThinkingEnabledFromHeader(headers) {
-		log.Debugf("kiro-openai: thinking mode enabled via Anthropic-Beta header")
-		return true
-	}
-
-	// Check OpenAI format: reasoning_effort parameter
-	// Valid values: "low", "medium", "high", "auto" (not "none")
-	reasoningEffort := gjson.GetBytes(openaiBody, "reasoning_effort")
-	if reasoningEffort.Exists() {
-		effort := reasoningEffort.String()
-		if effort != "" && effort != "none" {
-			log.Debugf("kiro-openai: thinking mode enabled via reasoning_effort: %s", effort)
-			return true
-		}
-	}
-
-	// Check AMP/Cursor format: <thinking_mode>interleaved</thinking_mode> in system prompt
-	bodyStr := string(openaiBody)
-	if strings.Contains(bodyStr, "<thinking_mode>") && strings.Contains(bodyStr, "</thinking_mode>") {
-		startTag := "<thinking_mode>"
-		endTag := "</thinking_mode>"
-		startIdx := strings.Index(bodyStr, startTag)
-		if startIdx >= 0 {
-			startIdx += len(startTag)
-			endIdx := strings.Index(bodyStr[startIdx:], endTag)
-			if endIdx >= 0 {
-				thinkingMode := bodyStr[startIdx : startIdx+endIdx]
-				if thinkingMode == "interleaved" || thinkingMode == "enabled" {
-					log.Debugf("kiro-openai: thinking mode enabled via AMP/Cursor format: %s", thinkingMode)
-					return true
-				}
-			}
-		}
-	}
-
-	// Check model name for thinking hints
-	model := gjson.GetBytes(openaiBody, "model").String()
-	modelLower := strings.ToLower(model)
-	if strings.Contains(modelLower, "thinking") || strings.Contains(modelLower, "-reason") {
-		log.Debugf("kiro-openai: thinking mode enabled via model name hint: %s", model)
-		return true
-	}
-
-	log.Debugf("kiro-openai: no thinking mode detected in OpenAI request")
-	return false
-}
 
 // extractToolChoiceHint extracts tool_choice from OpenAI request and returns a system prompt hint.
 // OpenAI tool_choice values:

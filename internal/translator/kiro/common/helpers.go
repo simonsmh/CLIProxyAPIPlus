@@ -8,6 +8,24 @@ import (
 	"github.com/tidwall/gjson"
 )
 
+var (
+	// emptySchema is the minimal empty-object JSON schema returned
+	// by EnsureKiroInputSchema when no parameters are provided.
+	// Kiro rejects null schemas.
+	emptySchema = map[string]interface{}{
+		"type":       "object",
+		"properties": map[string]interface{}{},
+	}
+
+	// stubInputSchema is the permissive schema used by
+	// SynthesizeToolSpecsFromHistory for fallback tool stubs.
+	stubInputSchema = map[string]interface{}{
+		"type":                 "object",
+		"properties":           map[string]interface{}{},
+		"additionalProperties": true,
+	}
+)
+
 // NormalizeOrigin maps incoming origin labels onto the two values the Kiro
 // upstream actually accepts: "CLI" (Amazon Q quota) and "AI_EDITOR" (Kiro
 // IDE quota). Anything that does not need rewriting is returned unchanged.
@@ -58,25 +76,12 @@ func ShortenToolNameIfNeeded(name string) string {
 }
 
 // EnsureKiroInputSchema returns the parameters object verbatim when
-// non-nil, or a minimal empty-object schema otherwise. Kiro rejects
-// nil schemas.
+// non-nil, or a minimal empty-object schema otherwise (Kiro rejects nil schemas).
 func EnsureKiroInputSchema(parameters interface{}) interface{} {
 	if parameters != nil {
 		return parameters
 	}
-	return map[string]interface{}{
-		"type":       "object",
-		"properties": map[string]interface{}{},
-	}
-}
-
-// HasThinkingTagInBody returns true when the request body already contains
-// a <thinking_mode> or <max_thinking_length> tag, indicating the client
-// (e.g. AMP/Cursor) injected its own thinking config and we shouldn't
-// inject ours on top.
-func HasThinkingTagInBody(body []byte) bool {
-	bodyStr := string(body)
-	return strings.Contains(bodyStr, "<thinking_mode>") || strings.Contains(bodyStr, "<max_thinking_length>")
+	return emptySchema
 }
 
 // DeduplicateToolResults drops repeated tool_use_id entries from the
@@ -85,11 +90,11 @@ func DeduplicateToolResults(toolResults []KiroToolResult) []KiroToolResult {
 	if len(toolResults) == 0 {
 		return toolResults
 	}
-	seenIDs := make(map[string]bool)
+	seenIDs := make(map[string]struct{})
 	unique := make([]KiroToolResult, 0, len(toolResults))
 	for _, tr := range toolResults {
-		if !seenIDs[tr.ToolUseID] {
-			seenIDs[tr.ToolUseID] = true
+		if _, seen := seenIDs[tr.ToolUseID]; !seen {
+			seenIDs[tr.ToolUseID] = struct{}{}
 			unique = append(unique, tr)
 		} else {
 			log.Debugf("kiro: skipping duplicate toolResult: %s", tr.ToolUseID)
@@ -107,7 +112,7 @@ func SynthesizeToolSpecsFromHistory(history []KiroHistoryMessage) []KiroToolWrap
 	if len(history) == 0 {
 		return nil
 	}
-	seen := make(map[string]bool)
+	seen := make(map[string]struct{})
 	var stubs []KiroToolWrapper
 	for _, h := range history {
 		if h.AssistantResponseMessage == nil {
@@ -115,19 +120,18 @@ func SynthesizeToolSpecsFromHistory(history []KiroHistoryMessage) []KiroToolWrap
 		}
 		for _, tu := range h.AssistantResponseMessage.ToolUses {
 			name := strings.TrimSpace(tu.Name)
-			if name == "" || seen[name] {
+			if name == "" {
 				continue
 			}
-			seen[name] = true
+			if _, ok := seen[name]; ok {
+				continue
+			}
+			seen[name] = struct{}{}
 			stubs = append(stubs, KiroToolWrapper{
 				ToolSpecification: KiroToolSpecification{
 					Name:        ShortenToolNameIfNeeded(name),
 					Description: fmt.Sprintf("Tool: %s", name),
-					InputSchema: KiroInputSchema{JSON: map[string]interface{}{
-						"type":                 "object",
-						"properties":           map[string]interface{}{},
-						"additionalProperties": true,
-					}},
+					InputSchema: KiroInputSchema{JSON: stubInputSchema},
 				},
 			})
 		}

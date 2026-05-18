@@ -1,20 +1,13 @@
 package common
 
 import (
-	"strings"
 	"sync/atomic"
 )
 
-// Q's `web_search` upstream tool is reachable only via Kiro IDE's
-// `/algo/api/v2/.../mcp` endpoint; the chat endpoint sees it under a
-// different name. Reverse-engineered by Kiro IDE fork maintainers as
-// the placeholder name the chat endpoint accepts so its validator lets
-// the request through.
-//
-// In practice: clients that ship a `web_search` tool spec get rewritten
-// to `remote_web_search` before being sent to Q's chat endpoint, and
-// any history-side `tool_use` referencing `web_search` is rewritten the
-// same way so the spec/use names match.
+// Q's chat endpoint rejects tool specs named `web_search` — only the
+// separate MCP endpoint accepts that name. The chat endpoint expects
+// `remote_web_search` instead, so all tool specs and history tool_use
+// references must be rewritten before sending.
 const RemoteWebSearchToolName = "remote_web_search"
 
 // remoteWebSearchFallbackDescription is the minimal description we ship
@@ -72,7 +65,7 @@ func RenameWebSearchTool(name, description string) (string, string) {
 // renamed spec, so the assistant history references resolve against
 // the right entry. Returns the input unchanged if it isn't `web_search`.
 func RenameWebSearchToolUse(name string) string {
-	if strings.TrimSpace(name) == "web_search" {
+	if IsWebSearchToolName(name) {
 		return RemoteWebSearchToolName
 	}
 	return name
