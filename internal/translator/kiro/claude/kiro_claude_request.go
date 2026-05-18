@@ -124,21 +124,11 @@ func BuildKiroPayload(claudeBody []byte, modelID, profileArn, origin string, isA
 		log.Debugf("kiro: tool[%d]: name=%s", i, t.ToolSpecification.Name)
 	}
 
-	// Thinking mode implementation:
-	// Kiro API supports official thinking/reasoning mode via <thinking_mode> tag.
-	// When set to "enabled", Kiro returns reasoning content as official reasoningContentEvent
-	// rather than inline <thinking> tags in assistantResponseEvent.
-	// We cap max_thinking_length to reserve space for tool outputs and prevent truncation.
-	if thinkingEnabled {
-		thinkingHint := `<thinking_mode>enabled</thinking_mode>
-<max_thinking_length>16000</max_thinking_length>`
-		if systemPrompt != "" {
-			systemPrompt = thinkingHint + "\n\n" + systemPrompt
-		} else {
-			systemPrompt = thinkingHint
-		}
-		log.Infof("kiro: injected thinking prompt (official mode), has_tools: %v", len(kiroTools) > 0)
-	}
+	// `thinkingEnabled` is computed for the executor's streaming-side
+	// gating decisions (response shape varies between models that emit
+	// reasoningContentEvent and those that don't). Q's server picks
+	// reasoning behavior from the model itself; there is no client-side
+	// switch that turns it on or off, so we don't inject anything here.
 
 	// Process messages and build history
 	history, currentUserMsg, currentToolResults := processMessages(messages, modelID, origin)
