@@ -5,6 +5,7 @@ import (
 	"strings"
 	"testing"
 
+	kirocommon "github.com/router-for-me/CLIProxyAPI/v7/internal/translator/kiro/common"
 	"github.com/tidwall/gjson"
 )
 
@@ -117,7 +118,7 @@ func TestSynthesizeToolSpecsFromHistory_Dedup(t *testing.T) {
 			ToolUses: []KiroToolUse{{Name: "Read"}, {Name: "Edit"}},
 		}},
 	}
-	got := synthesizeToolSpecsFromHistory(hist)
+	got := kirocommon.SynthesizeToolSpecsFromHistory(hist)
 	if len(got) != 3 {
 		t.Fatalf("expected 3 unique stubs, got %d: %+v", len(got), got)
 	}

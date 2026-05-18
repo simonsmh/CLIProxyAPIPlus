@@ -59,7 +59,7 @@ func BuildKiroPayloadFromOpenAI(openaiBody []byte, modelID, profileArn, origin s
 	log.Debugf("kiro-openai: BuildKiroPayloadFromOpenAI called, modelID=%s, origin=%s, isAgentic=%v, isChatOnly=%v", modelID, origin, isAgentic, isChatOnly)
 
 	// Normalize origin value for Kiro API compatibility
-	origin = normalizeOrigin(origin)
+	origin = kirocommon.NormalizeOrigin(origin)
 	log.Debugf("kiro-openai: normalized origin value: %s", origin)
 
 	messages := gjson.GetBytes(openaiBody, "messages")
@@ -157,14 +157,14 @@ func BuildKiroPayloadFromOpenAI(openaiBody []byte, modelID, profileArn, origin s
 		currentUserMsg.Content = buildFinalContent(currentUserMsg.Content, systemPrompt, currentToolResults)
 
 		// Deduplicate currentToolResults
-		currentToolResults = deduplicateToolResults(currentToolResults)
+		currentToolResults = kirocommon.DeduplicateToolResults(currentToolResults, "kiro-openai")
 
 		// Build userInputMessageContext with tools and tool results.
 		// See claude translator for the rationale — Kiro rejects requests when
 		// history contains tool turns but currentMessage.tools is empty. Fall
 		// back to stub specs derived from history if the client omitted tools.
 		if len(kiroTools) == 0 && !isChatOnly {
-			kiroTools = synthesizeToolSpecsFromHistory(history)
+			kiroTools = kirocommon.SynthesizeToolSpecsFromHistory(history)
 			if len(kiroTools) > 0 {
 				log.Infof("kiro-openai: synthesized %d stub tool spec(s) from history (client did not send tools)", len(kiroTools))
 			}
@@ -206,8 +206,8 @@ func BuildKiroPayloadFromOpenAI(openaiBody []byte, modelID, profileArn, origin s
 	}
 
 	// Session IDs: extract from messages[].additional_kwargs (LangChain format) or random
-	conversationID := extractMetadataFromMessages(messages, "conversationId")
-	continuationID := extractMetadataFromMessages(messages, "continuationId")
+	conversationID := kirocommon.ExtractMetadataFromMessages(messages, "conversationId")
+	continuationID := kirocommon.ExtractMetadataFromMessages(messages, "continuationId")
 	if conversationID == "" {
 		conversationID = uuid.New().String()
 	}
@@ -237,33 +237,10 @@ func BuildKiroPayloadFromOpenAI(openaiBody []byte, modelID, profileArn, origin s
 	return result, thinkingEnabled
 }
 
-// normalizeOrigin normalizes origin value for Kiro API compatibility
-func normalizeOrigin(origin string) string {
-	switch origin {
-	case "KIRO_CLI":
-		return "CLI"
-	case "KIRO_AI_EDITOR":
-		return "AI_EDITOR"
-	case "AMAZON_Q":
-		return "CLI"
-	case "KIRO_IDE":
-		return "AI_EDITOR"
-	default:
-		return origin
-	}
-}
-
-// extractMetadataFromMessages extracts metadata from messages[].additional_kwargs (LangChain format).
-// Searches from the last message backwards, returns empty string if not found.
-func extractMetadataFromMessages(messages gjson.Result, key string) string {
-	arr := messages.Array()
-	for i := len(arr) - 1; i >= 0; i-- {
-		if val := arr[i].Get("additional_kwargs." + key); val.Exists() && val.String() != "" {
-			return val.String()
-		}
-	}
-	return ""
-}
+// normalizeOrigin / extractMetadataFromMessages / shortenToolNameIfNeeded /
+// ensureKiroInputSchema / synthesizeToolSpecsFromHistory previously lived
+// here but are now shared with the claude-format builder via
+// internal/translator/kiro/common.
 
 // extractSystemPromptFromOpenAI extracts system prompt from OpenAI messages
 func extractSystemPromptFromOpenAI(messages gjson.Result) string {
@@ -291,74 +268,6 @@ func extractSystemPromptFromOpenAI(messages gjson.Result) string {
 	return strings.Join(systemParts, "\n")
 }
 
-// shortenToolNameIfNeeded shortens tool names that exceed 64 characters.
-// MCP tools often have long names like "mcp__server-name__tool-name".
-// This preserves the "mcp__" prefix and last segment when possible.
-func shortenToolNameIfNeeded(name string) string {
-	const limit = 64
-	if len(name) <= limit {
-		return name
-	}
-	// For MCP tools, try to preserve prefix and last segment
-	if strings.HasPrefix(name, "mcp__") {
-		idx := strings.LastIndex(name, "__")
-		if idx > 0 {
-			cand := "mcp__" + name[idx+2:]
-			if len(cand) > limit {
-				return cand[:limit]
-			}
-			return cand
-		}
-	}
-	return name[:limit]
-}
-
-func ensureKiroInputSchema(parameters interface{}) interface{} {
-	if parameters != nil {
-		return parameters
-	}
-	return map[string]interface{}{
-		"type":       "object",
-		"properties": map[string]interface{}{},
-	}
-}
-
-// synthesizeToolSpecsFromHistory builds stub KiroToolWrapper entries from any
-// toolUse names referenced in history. See the matching helper in the claude
-// translator for context — Kiro requires currentMessage.userInputMessageContext.tools
-// to be non-empty whenever history contains tool turns; otherwise the API
-// rejects the request with "Improperly formed request".
-func synthesizeToolSpecsFromHistory(history []KiroHistoryMessage) []KiroToolWrapper {
-	if len(history) == 0 {
-		return nil
-	}
-	seen := make(map[string]bool)
-	var stubs []KiroToolWrapper
-	for _, h := range history {
-		if h.AssistantResponseMessage == nil {
-			continue
-		}
-		for _, tu := range h.AssistantResponseMessage.ToolUses {
-			name := strings.TrimSpace(tu.Name)
-			if name == "" || seen[name] {
-				continue
-			}
-			seen[name] = true
-			stubs = append(stubs, KiroToolWrapper{
-				ToolSpecification: KiroToolSpecification{
-					Name:        shortenToolNameIfNeeded(name),
-					Description: fmt.Sprintf("Tool: %s", name),
-					InputSchema: KiroInputSchema{JSON: map[string]interface{}{
-						"type":                 "object",
-						"properties":           map[string]interface{}{},
-						"additionalProperties": true,
-					}},
-				},
-			})
-		}
-	}
-	return stubs
-}
 
 // convertOpenAIToolsToKiro converts OpenAI tools to Kiro format
 func convertOpenAIToolsToKiro(tools gjson.Result) []KiroToolWrapper {
@@ -406,11 +315,11 @@ func convertOpenAIToolsToKiro(tools gjson.Result) []KiroToolWrapper {
 		if parametersResult.Exists() && parametersResult.Type != gjson.Null {
 			parameters = parametersResult.Value()
 		}
-		parameters = ensureKiroInputSchema(parameters)
+		parameters = kirocommon.EnsureKiroInputSchema(parameters)
 
 		// Shorten tool name if it exceeds 64 characters (common with MCP tools)
 		originalName := name
-		name = shortenToolNameIfNeeded(name)
+		name = kirocommon.ShortenToolNameIfNeeded(name)
 		if name != originalName {
 			log.Debugf("kiro-openai: shortened tool name from '%s' to '%s'", originalName, name)
 		}
@@ -943,13 +852,6 @@ func checkThinkingModeFromOpenAIWithHeaders(openaiBody []byte, headers http.Head
 	return false
 }
 
-// hasThinkingTagInBody checks if the request body already contains thinking configuration tags.
-// This is used to prevent duplicate injection when client (e.g., AMP/Cursor) already includes thinking config.
-func hasThinkingTagInBody(body []byte) bool {
-	bodyStr := string(body)
-	return strings.Contains(bodyStr, "<thinking_mode>") || strings.Contains(bodyStr, "<max_thinking_length>")
-}
-
 // extractToolChoiceHint extracts tool_choice from OpenAI request and returns a system prompt hint.
 // OpenAI tool_choice values:
 // - "none": Don't use any tools
@@ -1025,21 +927,6 @@ func extractResponseFormatHint(openaiBody []byte) string {
 	return ""
 }
 
-// deduplicateToolResults removes duplicate tool results
-func deduplicateToolResults(toolResults []KiroToolResult) []KiroToolResult {
-	if len(toolResults) == 0 {
-		return toolResults
-	}
-
-	seenIDs := make(map[string]bool)
-	unique := make([]KiroToolResult, 0, len(toolResults))
-	for _, tr := range toolResults {
-		if !seenIDs[tr.ToolUseID] {
-			seenIDs[tr.ToolUseID] = true
-			unique = append(unique, tr)
-		} else {
-			log.Debugf("kiro-openai: skipping duplicate toolResult: %s", tr.ToolUseID)
-		}
-	}
-	return unique
-}
+// deduplicateToolResults / hasThinkingTagInBody previously lived here but
+// are now shared with the claude-format builder via
+// internal/translator/kiro/common.

@@ -62,7 +62,7 @@ func BuildKiroPayload(claudeBody []byte, modelID, profileArn, origin string, isA
 	log.Debugf("kiro: BuildKiroPayload called, modelID=%s, origin=%s, isAgentic=%v, isChatOnly=%v", modelID, origin, isAgentic, isChatOnly)
 
 	// Normalize origin value for Kiro API compatibility
-	origin = normalizeOrigin(origin)
+	origin = kirocommon.NormalizeOrigin(origin)
 	log.Debugf("kiro: normalized origin value: %s", origin)
 
 	messages := gjson.GetBytes(claudeBody, "messages")
@@ -151,7 +151,7 @@ func BuildKiroPayload(claudeBody []byte, modelID, profileArn, origin string, isA
 		currentUserMsg.Content = buildFinalContent(currentUserMsg.Content, systemPrompt, currentToolResults)
 
 		// Deduplicate currentToolResults
-		currentToolResults = deduplicateToolResults(currentToolResults)
+		currentToolResults = kirocommon.DeduplicateToolResults(currentToolResults, "kiro")
 
 		// Build userInputMessageContext with tools and tool results.
 		//
@@ -167,7 +167,7 @@ func BuildKiroPayload(claudeBody []byte, modelID, profileArn, origin string, isA
 		// from the names referenced in history whenever the client didn't
 		// provide tools but history references them.
 		if len(kiroTools) == 0 && !isChatOnly {
-			kiroTools = synthesizeToolSpecsFromHistory(history)
+			kiroTools = kirocommon.SynthesizeToolSpecsFromHistory(history)
 			if len(kiroTools) > 0 {
 				log.Infof("kiro: synthesized %d stub tool spec(s) from history (client did not send tools)", len(kiroTools))
 			}
@@ -209,8 +209,8 @@ func BuildKiroPayload(claudeBody []byte, modelID, profileArn, origin string, isA
 	}
 
 	// Session IDs: extract from messages[].additional_kwargs (LangChain format) or random
-	conversationID := extractMetadataFromMessages(messages, "conversationId")
-	continuationID := extractMetadataFromMessages(messages, "continuationId")
+	conversationID := kirocommon.ExtractMetadataFromMessages(messages, "conversationId")
+	continuationID := kirocommon.ExtractMetadataFromMessages(messages, "continuationId")
 	if conversationID == "" {
 		conversationID = uuid.New().String()
 	}
@@ -240,33 +240,10 @@ func BuildKiroPayload(claudeBody []byte, modelID, profileArn, origin string, isA
 	return result, thinkingEnabled
 }
 
-// normalizeOrigin normalizes origin value for Kiro API compatibility
-func normalizeOrigin(origin string) string {
-	switch origin {
-	case "KIRO_CLI":
-		return "CLI"
-	case "KIRO_AI_EDITOR":
-		return "AI_EDITOR"
-	case "AMAZON_Q":
-		return "CLI"
-	case "KIRO_IDE":
-		return "AI_EDITOR"
-	default:
-		return origin
-	}
-}
-
-// extractMetadataFromMessages extracts metadata from messages[].additional_kwargs (LangChain format).
-// Searches from the last message backwards, returns empty string if not found.
-func extractMetadataFromMessages(messages gjson.Result, key string) string {
-	arr := messages.Array()
-	for i := len(arr) - 1; i >= 0; i-- {
-		if val := arr[i].Get("additional_kwargs." + key); val.Exists() && val.String() != "" {
-			return val.String()
-		}
-	}
-	return ""
-}
+// normalizeOrigin / extractMetadataFromMessages / shortenToolNameIfNeeded /
+// ensureKiroInputSchema / synthesizeToolSpecsFromHistory / deduplicateToolResults
+// previously lived here but are now shared with the openai-format builder via
+// internal/translator/kiro/common.
 
 // extractSystemPrompt extracts system prompt from Claude request
 func extractSystemPrompt(claudeBody []byte) string {
@@ -309,13 +286,6 @@ func checkThinkingMode(claudeBody []byte) (bool, int64) {
 	}
 
 	return thinkingEnabled, budgetTokens
-}
-
-// hasThinkingTagInBody checks if the request body already contains thinking configuration tags.
-// This is used to prevent duplicate injection when client (e.g., AMP/Cursor) already includes thinking config.
-func hasThinkingTagInBody(body []byte) bool {
-	bodyStr := string(body)
-	return strings.Contains(bodyStr, "<thinking_mode>") || strings.Contains(bodyStr, "<max_thinking_length>")
 }
 
 // IsThinkingEnabledFromHeader checks if thinking mode is enabled via Anthropic-Beta header.
@@ -425,81 +395,6 @@ func IsThinkingEnabledWithHeaders(body []byte, headers http.Header) bool {
 	return false
 }
 
-// shortenToolNameIfNeeded shortens tool names that exceed 64 characters.
-// MCP tools often have long names like "mcp__server-name__tool-name".
-// This preserves the "mcp__" prefix and last segment when possible.
-func shortenToolNameIfNeeded(name string) string {
-	const limit = 64
-	if len(name) <= limit {
-		return name
-	}
-	// For MCP tools, try to preserve prefix and last segment
-	if strings.HasPrefix(name, "mcp__") {
-		idx := strings.LastIndex(name, "__")
-		if idx > 0 {
-			cand := "mcp__" + name[idx+2:]
-			if len(cand) > limit {
-				return cand[:limit]
-			}
-			return cand
-		}
-	}
-	return name[:limit]
-}
-
-func ensureKiroInputSchema(parameters interface{}) interface{} {
-	if parameters != nil {
-		return parameters
-	}
-	return map[string]interface{}{
-		"type":       "object",
-		"properties": map[string]interface{}{},
-	}
-}
-
-// synthesizeToolSpecsFromHistory builds a minimal set of stub KiroToolWrapper
-// entries from any toolUse names referenced in history. This is the fallback
-// path used when the client request does not include the `tools` array but
-// history contains tool turns — Kiro's schema validator rejects such payloads
-// with "Improperly formed request" unless tools is non-empty.
-//
-// The synthesized spec is intentionally permissive: schema is an open object
-// (any properties allowed) and the description is a generic placeholder. The
-// real schema does not matter here because Kiro only uses tools to decide
-// what the model is allowed to call going forward, and the history toolUses
-// are already serialized JSON.
-func synthesizeToolSpecsFromHistory(history []KiroHistoryMessage) []KiroToolWrapper {
-	if len(history) == 0 {
-		return nil
-	}
-	seen := make(map[string]bool)
-	var stubs []KiroToolWrapper
-	for _, h := range history {
-		if h.AssistantResponseMessage == nil {
-			continue
-		}
-		for _, tu := range h.AssistantResponseMessage.ToolUses {
-			name := strings.TrimSpace(tu.Name)
-			if name == "" || seen[name] {
-				continue
-			}
-			seen[name] = true
-			stubs = append(stubs, KiroToolWrapper{
-				ToolSpecification: KiroToolSpecification{
-					Name:        shortenToolNameIfNeeded(name),
-					Description: fmt.Sprintf("Tool: %s", name),
-					InputSchema: KiroInputSchema{JSON: map[string]interface{}{
-						"type":                 "object",
-						"properties":           map[string]interface{}{},
-						"additionalProperties": true,
-					}},
-				},
-			})
-		}
-	}
-	return stubs
-}
-
 // convertClaudeToolsToKiro converts Claude tools to Kiro format
 func convertClaudeToolsToKiro(tools gjson.Result) []KiroToolWrapper {
 	var kiroTools []KiroToolWrapper
@@ -515,11 +410,11 @@ func convertClaudeToolsToKiro(tools gjson.Result) []KiroToolWrapper {
 		if inputSchemaResult.Exists() && inputSchemaResult.Type != gjson.Null {
 			inputSchema = inputSchemaResult.Value()
 		}
-		inputSchema = ensureKiroInputSchema(inputSchema)
+		inputSchema = kirocommon.EnsureKiroInputSchema(inputSchema)
 
 		// Shorten tool name if it exceeds 64 characters (common with MCP tools)
 		originalName := name
-		name = shortenToolNameIfNeeded(name)
+		name = kirocommon.ShortenToolNameIfNeeded(name)
 		if name != originalName {
 			log.Debugf("kiro: shortened tool name from '%s' to '%s'", originalName, name)
 		}
@@ -718,25 +613,6 @@ func buildFinalContent(content, systemPrompt string, toolResults []KiroToolResul
 	}
 
 	return finalContent
-}
-
-// deduplicateToolResults removes duplicate tool results
-func deduplicateToolResults(toolResults []KiroToolResult) []KiroToolResult {
-	if len(toolResults) == 0 {
-		return toolResults
-	}
-
-	seenIDs := make(map[string]bool)
-	unique := make([]KiroToolResult, 0, len(toolResults))
-	for _, tr := range toolResults {
-		if !seenIDs[tr.ToolUseID] {
-			seenIDs[tr.ToolUseID] = true
-			unique = append(unique, tr)
-		} else {
-			log.Debugf("kiro: skipping duplicate toolResult in currentMessage: %s", tr.ToolUseID)
-		}
-	}
-	return unique
 }
 
 // extractClaudeToolChoiceHint extracts tool_choice from Claude request and returns a system prompt hint.

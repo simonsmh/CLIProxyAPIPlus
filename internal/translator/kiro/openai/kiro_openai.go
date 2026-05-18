@@ -280,7 +280,7 @@ func ConvertOpenAIToolsToKiroFormat(tools []map[string]interface{}) []KiroToolWr
 
 		name := kirocommon.GetString(fn, "name")
 		description := kirocommon.GetString(fn, "description")
-		parameters := ensureKiroInputSchema(fn["parameters"])
+		parameters := kirocommon.EnsureKiroInputSchema(fn["parameters"])
 
 		if name == "" {
 			continue
