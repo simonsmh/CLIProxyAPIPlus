@@ -951,6 +951,18 @@ func BuildAssistantMessageStruct(msg gjson.Result) KiroAssistantResponseMessage 
 			switch partType {
 			case "text":
 				contentBuilder.WriteString(part.Get("text").String())
+			case "thinking", "redacted_thinking":
+				// Replayed reasoning from a prior turn. Q has no separate
+				// reasoning channel for *history* (live reasoning comes back
+				// as reasoningContentEvent, not in the message body), so we
+				// fold the text into assistant content. Without this, multi-
+				// turn sessions where the client echoes back prior thinking
+				// blocks lose the model's earlier reasoning entirely.
+				if t := part.Get("thinking").String(); t != "" {
+					contentBuilder.WriteString(t)
+				} else if t := part.Get("text").String(); t != "" {
+					contentBuilder.WriteString(t)
+				}
 			case "tool_use":
 				toolUseID := part.Get("id").String()
 				toolName := part.Get("name").String()
@@ -975,6 +987,8 @@ func BuildAssistantMessageStruct(msg gjson.Result) KiroAssistantResponseMessage 
 					Name:      toolName,
 					Input:     inputMap,
 				})
+			default:
+				log.Debugf("kiro: dropping unsupported assistant content block type: %s", partType)
 			}
 		}
 	} else {
