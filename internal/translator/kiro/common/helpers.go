@@ -80,14 +80,10 @@ func HasThinkingTagInBody(body []byte) bool {
 }
 
 // DeduplicateToolResults drops repeated tool_use_id entries from the
-// slice, preserving first-seen order. The optional logTag prefixes
-// debug logs so callers can keep their existing log breadcrumbs.
-func DeduplicateToolResults(toolResults []KiroToolResult, logTag string) []KiroToolResult {
+// slice, preserving first-seen order.
+func DeduplicateToolResults(toolResults []KiroToolResult) []KiroToolResult {
 	if len(toolResults) == 0 {
 		return toolResults
-	}
-	if logTag == "" {
-		logTag = "kiro"
 	}
 	seenIDs := make(map[string]bool)
 	unique := make([]KiroToolResult, 0, len(toolResults))
@@ -96,7 +92,7 @@ func DeduplicateToolResults(toolResults []KiroToolResult, logTag string) []KiroT
 			seenIDs[tr.ToolUseID] = true
 			unique = append(unique, tr)
 		} else {
-			log.Debugf("%s: skipping duplicate toolResult: %s", logTag, tr.ToolUseID)
+			log.Debugf("kiro: skipping duplicate toolResult: %s", tr.ToolUseID)
 		}
 	}
 	return unique

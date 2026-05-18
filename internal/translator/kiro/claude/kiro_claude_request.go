@@ -12,6 +12,7 @@ import (
 	"unicode/utf8"
 
 	"github.com/google/uuid"
+	"github.com/router-for-me/CLIProxyAPI/v7/internal/thinking"
 	kirocommon "github.com/router-for-me/CLIProxyAPI/v7/internal/translator/kiro/common"
 	log "github.com/sirupsen/logrus"
 	"github.com/tidwall/gjson"
@@ -151,7 +152,7 @@ func BuildKiroPayload(claudeBody []byte, modelID, profileArn, origin string, isA
 		currentUserMsg.Content = buildFinalContent(currentUserMsg.Content, systemPrompt, currentToolResults)
 
 		// Deduplicate currentToolResults
-		currentToolResults = kirocommon.DeduplicateToolResults(currentToolResults, "kiro")
+		currentToolResults = kirocommon.DeduplicateToolResults(currentToolResults)
 
 		// Build userInputMessageContext with tools and tool results.
 		//
@@ -239,11 +240,6 @@ func BuildKiroPayload(claudeBody []byte, modelID, profileArn, origin string, isA
 
 	return result, thinkingEnabled
 }
-
-// normalizeOrigin / extractMetadataFromMessages / shortenToolNameIfNeeded /
-// ensureKiroInputSchema / synthesizeToolSpecsFromHistory / deduplicateToolResults
-// previously lived here but are now shared with the openai-format builder via
-// internal/translator/kiro/common.
 
 // extractSystemPrompt extracts system prompt from Claude request
 func extractSystemPrompt(claudeBody []byte) string {
@@ -748,18 +744,14 @@ func BuildAssistantMessageStruct(msg gjson.Result) KiroAssistantResponseMessage 
 			switch partType {
 			case "text":
 				contentBuilder.WriteString(part.Get("text").String())
-			case "thinking", "redacted_thinking":
+			case "thinking":
 				// Replayed reasoning from a prior turn. Q has no separate
 				// reasoning channel for *history* (live reasoning comes back
 				// as reasoningContentEvent, not in the message body), so we
 				// fold the text into assistant content. Without this, multi-
 				// turn sessions where the client echoes back prior thinking
 				// blocks lose the model's earlier reasoning entirely.
-				if t := part.Get("thinking").String(); t != "" {
-					contentBuilder.WriteString(t)
-				} else if t := part.Get("text").String(); t != "" {
-					contentBuilder.WriteString(t)
-				}
+				contentBuilder.WriteString(thinking.GetThinkingText(part))
 			case "tool_use":
 				toolUseID := part.Get("id").String()
 				toolName := part.Get("name").String()

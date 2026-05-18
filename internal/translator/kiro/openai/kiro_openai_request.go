@@ -12,6 +12,7 @@ import (
 	"unicode/utf8"
 
 	"github.com/google/uuid"
+	"github.com/router-for-me/CLIProxyAPI/v7/internal/thinking"
 	kiroclaude "github.com/router-for-me/CLIProxyAPI/v7/internal/translator/kiro/claude"
 	kirocommon "github.com/router-for-me/CLIProxyAPI/v7/internal/translator/kiro/common"
 	log "github.com/sirupsen/logrus"
@@ -157,7 +158,7 @@ func BuildKiroPayloadFromOpenAI(openaiBody []byte, modelID, profileArn, origin s
 		currentUserMsg.Content = buildFinalContent(currentUserMsg.Content, systemPrompt, currentToolResults)
 
 		// Deduplicate currentToolResults
-		currentToolResults = kirocommon.DeduplicateToolResults(currentToolResults, "kiro-openai")
+		currentToolResults = kirocommon.DeduplicateToolResults(currentToolResults)
 
 		// Build userInputMessageContext with tools and tool results.
 		// See claude translator for the rationale — Kiro rejects requests when
@@ -236,11 +237,6 @@ func BuildKiroPayloadFromOpenAI(openaiBody []byte, modelID, profileArn, origin s
 
 	return result, thinkingEnabled
 }
-
-// normalizeOrigin / extractMetadataFromMessages / shortenToolNameIfNeeded /
-// ensureKiroInputSchema / synthesizeToolSpecsFromHistory previously lived
-// here but are now shared with the claude-format builder via
-// internal/translator/kiro/common.
 
 // extractSystemPromptFromOpenAI extracts system prompt from OpenAI messages
 func extractSystemPromptFromOpenAI(messages gjson.Result) string {
@@ -673,17 +669,13 @@ func buildAssistantMessageFromOpenAI(msg gjson.Result) KiroAssistantResponseMess
 			switch partType {
 			case "text":
 				contentBuilder.WriteString(part.Get("text").String())
-			case "thinking", "redacted_thinking", "reasoning":
+			case "thinking", "reasoning":
 				// Replayed reasoning from a prior turn (Anthropic-style
 				// thinking block, or OpenAI o1-style reasoning content).
 				// Q has no separate reasoning channel for *history*, so
 				// we fold the text into assistant content rather than
 				// drop it on the floor.
-				if t := part.Get("thinking").String(); t != "" {
-					contentBuilder.WriteString(t)
-				} else if t := part.Get("text").String(); t != "" {
-					contentBuilder.WriteString(t)
-				}
+				contentBuilder.WriteString(thinking.GetThinkingText(part))
 			case "tool_use":
 				// Handle tool_use in content array (Anthropic/OpenCode format)
 				// This is different from OpenAI's tool_calls format
@@ -926,7 +918,3 @@ func extractResponseFormatHint(openaiBody []byte) string {
 
 	return ""
 }
-
-// deduplicateToolResults / hasThinkingTagInBody previously lived here but
-// are now shared with the claude-format builder via
-// internal/translator/kiro/common.
