@@ -8,33 +8,26 @@ import (
 	"encoding/json"
 	"fmt"
 	"strings"
-	"sync/atomic"
 	"time"
 
 	"github.com/google/uuid"
+	kirocommon "github.com/router-for-me/CLIProxyAPI/v7/internal/translator/kiro/common"
 	log "github.com/sirupsen/logrus"
 	"github.com/tidwall/gjson"
 	"github.com/tidwall/sjson"
 )
 
-// cachedToolDescription stores the dynamically-fetched web_search tool description.
-// Written by the executor via SetWebSearchDescription, read by the translator
-// when building the remote_web_search tool for Kiro API requests.
-var cachedToolDescription atomic.Value // stores string
-
-// GetWebSearchDescription returns the cached web_search tool description,
-// or empty string if not yet fetched. Lock-free via atomic.Value.
+// GetWebSearchDescription returns the cached web_search tool description.
+// Aliased to common so existing call sites (the executor lives in a
+// different package) keep working unchanged.
 func GetWebSearchDescription() string {
-	if v := cachedToolDescription.Load(); v != nil {
-		return v.(string)
-	}
-	return ""
+	return kirocommon.GetWebSearchDescription()
 }
 
-// SetWebSearchDescription stores the dynamically-fetched web_search tool description.
-// Called by the executor after fetching from MCP tools/list.
+// SetWebSearchDescription stores the dynamically-fetched web_search tool
+// description. Aliased to common — see GetWebSearchDescription.
 func SetWebSearchDescription(desc string) {
-	cachedToolDescription.Store(desc)
+	kirocommon.SetWebSearchDescription(desc)
 }
 
 // McpRequest represents a JSON-RPC 2.0 request to Kiro MCP API

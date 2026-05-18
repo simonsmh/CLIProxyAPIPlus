@@ -18,8 +18,6 @@ import (
 	"github.com/tidwall/gjson"
 )
 
-// remoteWebSearchDescription is a minimal fallback for when dynamic fetch from MCP tools/list hasn't completed yet.
-const remoteWebSearchDescription = "WebSearch looks up information outside the model's training data. Supports multiple queries to gather comprehensive information."
 
 // Kiro API request structs are defined in common; aliased here so existing
 // claude-package call sites keep working unchanged.
@@ -421,16 +419,11 @@ func convertClaudeToolsToKiro(tools gjson.Result) []KiroToolWrapper {
 			log.Debugf("kiro: tool '%s' has empty description, using default: %s", name, description)
 		}
 
-		// Rename web_search → remote_web_search for Kiro API compatibility
-		if name == "web_search" {
-			name = "remote_web_search"
-			// Prefer dynamically fetched description, fall back to hardcoded constant
-			if cached := GetWebSearchDescription(); cached != "" {
-				description = cached
-			} else {
-				description = remoteWebSearchDescription
-			}
-			log.Debugf("kiro: renamed tool web_search → remote_web_search")
+		// Rewrite web_search to the name Q's chat endpoint accepts
+		// (and use the live MCP description if we have one).
+		if newName, newDesc := kirocommon.RenameWebSearchTool(name, description); newName != name {
+			name, description = newName, newDesc
+			log.Debugf("kiro: renamed tool web_search → %s", name)
 		}
 
 		// Truncate long descriptions (individual tool limit)
@@ -773,10 +766,8 @@ func BuildAssistantMessageStruct(msg gjson.Result) KiroAssistantResponseMessage 
 					})
 				}
 
-				// Rename web_search → remote_web_search to match convertClaudeToolsToKiro
-				if toolName == "web_search" {
-					toolName = "remote_web_search"
-				}
+				// Match the rename done in convertClaudeToolsToKiro
+				toolName = kirocommon.RenameWebSearchToolUse(toolName)
 
 				toolUses = append(toolUses, KiroToolUse{
 					ToolUseID: toolUseID,

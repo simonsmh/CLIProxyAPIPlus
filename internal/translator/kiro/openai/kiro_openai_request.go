@@ -326,6 +326,13 @@ func convertOpenAIToolsToKiro(tools gjson.Result) []KiroToolWrapper {
 			log.Debugf("kiro-openai: tool '%s' has empty description, using default: %s", name, description)
 		}
 
+		// Rewrite web_search to the name Q's chat endpoint accepts
+		// (and use the live MCP description if we have one).
+		if newName, newDesc := kirocommon.RenameWebSearchTool(name, description); newName != name {
+			name, description = newName, newDesc
+			log.Debugf("kiro-openai: renamed tool web_search → %s", name)
+		}
+
 		// Truncate long descriptions
 		if len(description) > kirocommon.KiroMaxToolDescLen {
 			truncLen := kirocommon.KiroMaxToolDescLen - 30
@@ -704,7 +711,7 @@ func buildAssistantMessageFromOpenAI(msg gjson.Result) KiroAssistantResponseMess
 
 				toolUses = append(toolUses, KiroToolUse{
 					ToolUseID: toolUseID,
-					Name:      toolName,
+					Name:      kirocommon.RenameWebSearchToolUse(toolName),
 					Input:     inputMap,
 				})
 				log.Debugf("kiro-openai: extracted tool_use from content array: %s", toolName)
@@ -734,7 +741,7 @@ func buildAssistantMessageFromOpenAI(msg gjson.Result) KiroAssistantResponseMess
 
 			toolUses = append(toolUses, KiroToolUse{
 				ToolUseID: toolUseID,
-				Name:      toolName,
+				Name:      kirocommon.RenameWebSearchToolUse(toolName),
 				Input:     inputMap,
 			})
 		}
