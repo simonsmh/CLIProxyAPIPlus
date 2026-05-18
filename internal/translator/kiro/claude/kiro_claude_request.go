@@ -456,21 +456,14 @@ func processMessages(messages gjson.Result, modelID, origin string) ([]KiroHisto
 	// Merge adjacent messages with the same role
 	messagesArray := kirocommon.MergeAdjacentMessages(messages.Array())
 
-	// Q requires history to start with a user message. Some non-standard
-	// clients send conversations starting with an assistant turn — drop
-	// leading assistant messages until the first message is a user turn,
-	// matching what Q CLI's `enforce_conversation_invariants` does (it
-	// trims by walking pair boundaries; we trim by message because we
-	// don't have pair-based history). The dropped content was non-standard
-	// to begin with, so this is preferable to injecting a fake "[start]"
-	// user message that the model would then see as conversation history.
-	dropped := 0
-	for len(messagesArray) > 0 && messagesArray[0].Get("role").String() == "assistant" {
-		messagesArray = messagesArray[1:]
-		dropped++
-	}
-	if dropped > 0 {
-		log.Infof("kiro: dropped %d leading assistant message(s) to satisfy Q's first-message-is-user invariant", dropped)
+	// FIX: Kiro API requires history to start with a user message.
+	// Some clients (e.g., OpenClaw) send conversations starting with an assistant message,
+	// which is valid for the Claude API but causes "Improperly formed request" on Kiro.
+	// Prepend a placeholder user message so the history alternation is correct.
+	if len(messagesArray) > 0 && messagesArray[0].Get("role").String() == "assistant" {
+		placeholder := `{"role":"user","content":"[start]"}`
+		messagesArray = append([]gjson.Result{gjson.Parse(placeholder)}, messagesArray...)
+		log.Infof("kiro: messages started with assistant role, prepended placeholder user message for Kiro API compatibility")
 	}
 
 	for i, msg := range messagesArray {

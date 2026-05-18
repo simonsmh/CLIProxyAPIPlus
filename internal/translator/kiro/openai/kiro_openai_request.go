@@ -367,17 +367,6 @@ func processOpenAIMessages(messages gjson.Result, modelID, origin string) ([]Kir
 	// Merge adjacent messages with the same role
 	messagesArray := kirocommon.MergeAdjacentMessages(messages.Array())
 
-	// Q requires history to start with a user message; drop any leading
-	// assistant turns. See the matching logic in the claude-format builder.
-	dropped := 0
-	for len(messagesArray) > 0 && messagesArray[0].Get("role").String() == "assistant" {
-		messagesArray = messagesArray[1:]
-		dropped++
-	}
-	if dropped > 0 {
-		log.Infof("kiro-openai: dropped %d leading assistant message(s) to satisfy Q's first-message-is-user invariant", dropped)
-	}
-
 	// Track pending tool results that should be attached to the next user message
 	// This is critical for LiteLLM-translated requests where tool results appear
 	// as separate "tool" role messages between assistant and user messages
