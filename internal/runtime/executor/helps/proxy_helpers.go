@@ -15,20 +15,9 @@ import (
 
 // httpClientCache caches HTTP clients by proxy URL to enable connection reuse
 var (
-	httpClientCache          = make(map[string]*http.Client)
-	httpClientCacheMutex     sync.RWMutex
-	cachedDefaultTransport   *http.Transport
-	cachedDefaultTransportOnce sync.Once
+	httpClientCache      = make(map[string]*http.Client)
+	httpClientCacheMutex sync.RWMutex
 )
-
-func getDefaultTransport() *http.Transport {
-	cachedDefaultTransportOnce.Do(func() {
-		if t, ok := http.DefaultTransport.(*http.Transport); ok && t != nil {
-			cachedDefaultTransport = t.Clone()
-		}
-	})
-	return cachedDefaultTransport
-}
 
 // NewProxyAwareHTTPClient creates an HTTP client with proper proxy configuration priority:
 // 1. Use auth.ProxyURL if configured (highest priority)
@@ -94,11 +83,6 @@ func NewProxyAwareHTTPClient(ctx context.Context, cfg *config.Config, auth *clip
 	// Priority 3: Use RoundTripper from context (typically from RoundTripperFor)
 	if rt, ok := ctx.Value("cliproxy.roundtripper").(http.RoundTripper); ok && rt != nil {
 		httpClient.Transport = rt
-	} else {
-		// Use default transport with preserved settings if no proxy or context transport is configured
-		if dt := getDefaultTransport(); dt != nil {
-			httpClient.Transport = dt.Clone()
-		}
 	}
 
 	return httpClient

@@ -254,10 +254,6 @@ func GetStaticModelDefinitionsByChannel(channel string) []*ModelInfo {
 		return GetAntigravityModels()
 	case "xai", "x-ai", "grok":
 		return GetXAIModels()
-	case "codebuddy":
-		return GetCodeBuddyModels()
-	case "cursor":
-		return GetCursorModels()
 	case "qoder":
 		return GetQoderModels()
 	default:
@@ -295,12 +291,6 @@ func LookupStaticModelInfo(modelID string) *ModelInfo {
 		data.Kimi,
 		data.Antigravity,
 		data.XAI,
-		GetGitHubCopilotModels(),
-		GetKiroModels(),
-		GetKiloModels(),
-		GetAmazonQModels(),
-		GetCodeBuddyModels(),
-		GetCursorModels(),
 		data.Qoder,
 	}
 	for _, models := range allModels {
