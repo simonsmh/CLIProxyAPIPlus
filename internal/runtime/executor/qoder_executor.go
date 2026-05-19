@@ -186,24 +186,28 @@ func (e *QoderExecutor) ExecuteStream(ctx context.Context, authRecord *cliproxya
 	if httpResp.StatusCode != http.StatusOK {
 		defer func() { _ = httpResp.Body.Close() }()
 		body, _ := io.ReadAll(httpResp.Body)
-		// Log enough to identify the upstream rejecter (405 from a CDN /
-		// gateway looks identical to 405 from the API itself in error text).
-		// We log only response metadata + the first 500 bytes of the body —
-		// no request body, no auth headers — so it is safe to leave on at
-		// debug level. Triggered by the intermittent 405s seen on
-		// /algo/api/v3/conversation/chat after auth file watcher activity.
+		allow := httpResp.Header.Get("Allow")
+		server := httpResp.Header.Get("Server")
+		bodyPreview := truncate(string(body), 500)
 		log.WithFields(log.Fields{
 			"status":         httpResp.StatusCode,
 			"url":            qoderauth.QoderChatURL,
-			"server":         httpResp.Header.Get("Server"),
+			"server":         server,
 			"content_type":   httpResp.Header.Get("Content-Type"),
 			"x_request_id":   httpResp.Header.Get("X-Request-Id"),
 			"x_eagleeye_id":  httpResp.Header.Get("Eagleeye-Traceid"),
 			"x_oss_request":  httpResp.Header.Get("X-Oss-Request-Id"),
-			"allow":          httpResp.Header.Get("Allow"),
-			"body_truncated": truncate(string(body), 500),
-		}).Debug("qoder: upstream non-200")
-		return nil, newQoderStatusError(httpResp.StatusCode, string(body))
+			"allow":          allow,
+			"body_truncated": bodyPreview,
+		}).Warnf("qoder: upstream %d allow=%q server=%q body=%q", httpResp.StatusCode, allow, server, bodyPreview)
+		// Qoder returns 405 as peak rate-limiting; remap to 429 so the
+		// conductor's existing quota-backoff / retry logic handles it
+		// transparently without per-provider special-casing.
+		status := httpResp.StatusCode
+		if status == http.StatusMethodNotAllowed {
+			status = http.StatusTooManyRequests
+		}
+		return nil, newQoderStatusError(status, string(body))
 	}
 
 	// Create streaming channel

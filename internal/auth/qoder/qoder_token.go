@@ -123,23 +123,40 @@ func (ts *QoderTokenStorage) SaveTokenToFile(authFilePath string) error {
 		return fmt.Errorf("failed to create directory: %v", err)
 	}
 
-	f, err := os.Create(authFilePath)
-	if err != nil {
-		return fmt.Errorf("failed to create token file: %w", err)
-	}
-	defer func() {
-		_ = f.Close()
-	}()
-
-	// Merge metadata using helper
 	data, errMerge := misc.MergeMetadata(ts, ts.Metadata)
 	if errMerge != nil {
 		return fmt.Errorf("failed to merge metadata: %w", errMerge)
 	}
 
-	if err = json.NewEncoder(f).Encode(data); err != nil {
-		return fmt.Errorf("failed to write token to file: %w", err)
+	// Write to a temp file and atomically rename onto the target path.
+	// os.Create + Encode leaves a TOCTOU window where the file watcher
+	// sees an empty (just-truncated) or partially-written file; a temp
+	// write eliminates that window because the rename is atomic on the
+	// same filesystem.
+	tmp, err := os.CreateTemp(filepath.Dir(authFilePath), ".tmp-qoder-*")
+	if err != nil {
+		return fmt.Errorf("failed to create temp token file: %w", err)
 	}
+	tmpName := tmp.Name()
+	cleanup := true
+	defer func() {
+		_ = tmp.Close()
+		if cleanup {
+			_ = os.Remove(tmpName)
+		}
+	}()
+
+	if err = json.NewEncoder(tmp).Encode(data); err != nil {
+		return fmt.Errorf("failed to write token to temp file: %w", err)
+	}
+	if err = tmp.Close(); err != nil {
+		return fmt.Errorf("failed to close temp file: %w", err)
+	}
+
+	if err = os.Rename(tmpName, authFilePath); err != nil {
+		return fmt.Errorf("failed to commit token file: %w", err)
+	}
+	cleanup = false // rename succeeded, don't remove
 	return nil
 }
 
