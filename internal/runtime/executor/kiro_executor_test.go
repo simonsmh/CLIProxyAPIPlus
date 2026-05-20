@@ -436,11 +436,6 @@ func TestMapModelToKiro_MapsClaudeOpus47Variants(t *testing.T) {
 			expected: "claude-opus-4.7",
 		},
 		{
-			name:     "kiro agentic alias",
-			model:    "kiro-claude-opus-4-7-agentic",
-			expected: "claude-opus-4.7",
-		},
-		{
 			name:     "native hyphen alias",
 			model:    "claude-opus-4-7",
 			expected: "claude-opus-4.7",
@@ -448,11 +443,6 @@ func TestMapModelToKiro_MapsClaudeOpus47Variants(t *testing.T) {
 		{
 			name:     "native dotted alias",
 			model:    "claude-opus-4.7",
-			expected: "claude-opus-4.7",
-		},
-		{
-			name:     "native agentic alias",
-			model:    "claude-opus-4.7-agentic",
 			expected: "claude-opus-4.7",
 		},
 		{

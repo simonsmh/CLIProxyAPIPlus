@@ -2602,16 +2602,7 @@ func (s *Service) fetchKiroModels(a *coreauth.Auth) []*ModelInfo {
 	// Convert API models to ModelInfo
 	models := convertKiroAPIModels(apiModels)
 
-	baseCount := len(models)
-
-	// Generate agentic variants (only when kiro-system-prompt-inject-enable is on).
-	models = generateKiroAgenticVariants(models)
-
-	if len(models) > baseCount {
-		log.Infof("kiro: fetched %d models from API (+%d agentic variants)", baseCount, len(models)-baseCount)
-	} else {
-		log.Infof("kiro: fetched %d models from API", baseCount)
-	}
+	log.Infof("kiro: fetched %d models from API", len(models))
 	return models
 }
 
@@ -2726,59 +2717,4 @@ func formatKiroDisplayName(modelName string, rateMultiplier float64) string {
 	return displayName
 }
 
-// generateKiroAgenticVariants generates -agentic suffixed variants for Kiro models.
-// Agentic variants share the backend model ID but apply the chunked-write
-// optimization system prompt for coding agents.
-func generateKiroAgenticVariants(models []*ModelInfo) []*ModelInfo {
-	if len(models) == 0 {
-		return models
-	}
 
-
-
-	result := make([]*ModelInfo, 0, len(models)*2)
-	result = append(result, models...)
-
-	for _, m := range models {
-		if m == nil {
-			continue
-		}
-
-		// Skip if already an agentic variant
-		if strings.HasSuffix(m.ID, "-agentic") {
-			continue
-		}
-
-		// Skip auto models from agentic variant generation
-		if strings.Contains(m.ID, "-auto") {
-			continue
-		}
-
-		// Create agentic variant
-		agentic := &ModelInfo{
-			ID:                  m.ID + "-agentic",
-			Object:              m.Object,
-			Created:             m.Created,
-			OwnedBy:             m.OwnedBy,
-			Type:                m.Type,
-			DisplayName:         m.DisplayName + " (Agentic)",
-			Description:         m.Description + " - Optimized for coding agents (chunked writes)",
-			ContextLength:       m.ContextLength,
-			MaxCompletionTokens: m.MaxCompletionTokens,
-		}
-
-		// Copy thinking support if present
-		if m.Thinking != nil {
-			agentic.Thinking = &registry.ThinkingSupport{
-				Min:            m.Thinking.Min,
-				Max:            m.Thinking.Max,
-				ZeroAllowed:    m.Thinking.ZeroAllowed,
-				DynamicAllowed: m.Thinking.DynamicAllowed,
-			}
-		}
-
-		result = append(result, agentic)
-	}
-
-	return result
-}

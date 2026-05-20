@@ -47,11 +47,9 @@ func ConvertOpenAIRequestToKiro(modelName string, inputRawJSON []byte, stream bo
 // BuildKiroPayloadFromOpenAI constructs the Kiro API request payload from OpenAI format.
 // Supports tool calling - tools are passed via userInputMessageContext.
 // origin parameter determines which quota to use: "CLI" for Amazon Q, "AI_EDITOR" for Kiro IDE.
-// isAgentic parameter enables chunked write optimization prompt for -agentic model variants.
-// isChatOnly parameter disables tool calling for -chat model variants (pure conversation mode).
 // Returns the serialized Kiro API request payload.
-func BuildKiroPayloadFromOpenAI(openaiBody []byte, modelID, profileArn, origin string, isAgentic, isChatOnly bool) []byte {
-	log.Debugf("kiro-openai: BuildKiroPayloadFromOpenAI called, modelID=%s, origin=%s, isAgentic=%v, isChatOnly=%v", modelID, origin, isAgentic, isChatOnly)
+func BuildKiroPayloadFromOpenAI(openaiBody []byte, modelID, profileArn, origin string) []byte {
+	log.Debugf("kiro-openai: BuildKiroPayloadFromOpenAI called, modelID=%s, origin=%s", modelID, origin)
 
 	// Normalize origin value for Kiro API compatibility
 	origin = kirocommon.NormalizeOrigin(origin)
@@ -59,11 +57,7 @@ func BuildKiroPayloadFromOpenAI(openaiBody []byte, modelID, profileArn, origin s
 
 	messages := gjson.GetBytes(openaiBody, "messages")
 
-	// For chat-only mode, don't include tools
-	var tools gjson.Result
-	if !isChatOnly {
-		tools = gjson.GetBytes(openaiBody, "tools")
-	}
+	tools := gjson.GetBytes(openaiBody, "tools")
 
 	// Extract system prompt from messages
 	systemPrompt := extractSystemPromptFromOpenAI(messages)
@@ -79,14 +73,6 @@ func BuildKiroPayloadFromOpenAI(openaiBody []byte, modelID, profileArn, origin s
 		systemPrompt = timestampContext
 	}
 	log.Debugf("kiro-openai: injected timestamp context: %s", timestamp)
-
-	// Inject agentic optimization prompt for -agentic model variants
-	if isAgentic {
-		if systemPrompt != "" {
-			systemPrompt += "\n"
-		}
-		systemPrompt += kirocommon.KiroAgenticSystemPrompt
-	}
 
 	// Handle tool_choice parameter - Kiro doesn't support it natively, so we inject system prompt hints
 	// OpenAI tool_choice values: "none", "auto", "required", or {"type":"function","function":{"name":"..."}}
@@ -131,7 +117,7 @@ func BuildKiroPayloadFromOpenAI(openaiBody []byte, modelID, profileArn, origin s
 		// See claude translator for the rationale — Kiro rejects requests when
 		// history contains tool turns but currentMessage.tools is empty. Fall
 		// back to stub specs derived from history if the client omitted tools.
-		if len(kiroTools) == 0 && !isChatOnly {
+		if len(kiroTools) == 0 {
 			kiroTools = kirocommon.SynthesizeToolSpecsFromHistory(history)
 			if len(kiroTools) > 0 {
 				log.Infof("kiro-openai: synthesized %d stub tool spec(s) from history (client did not send tools)", len(kiroTools))

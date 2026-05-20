@@ -39,7 +39,7 @@ func TestToolResultsAttachedToCurrentMessage(t *testing.T) {
 		]
 	}`)
 
-	result := BuildKiroPayloadFromOpenAI(input, "kiro-model", "", "CLI", false, false)
+	result := BuildKiroPayloadFromOpenAI(input, "kiro-model", "", "CLI")
 
 	var payload KiroPayload
 	if err := json.Unmarshal(result, &payload); err != nil {
@@ -106,7 +106,7 @@ func TestToolResultsInHistoryUserMessage(t *testing.T) {
 		]
 	}`)
 
-	result := BuildKiroPayloadFromOpenAI(input, "kiro-model", "", "CLI", false, false)
+	result := BuildKiroPayloadFromOpenAI(input, "kiro-model", "", "CLI")
 
 	var payload KiroPayload
 	if err := json.Unmarshal(result, &payload); err != nil {
@@ -185,7 +185,7 @@ func TestToolResultsWithMultipleToolCalls(t *testing.T) {
 		]
 	}`)
 
-	result := BuildKiroPayloadFromOpenAI(input, "kiro-model", "", "CLI", false, false)
+	result := BuildKiroPayloadFromOpenAI(input, "kiro-model", "", "CLI")
 
 	var payload KiroPayload
 	if err := json.Unmarshal(result, &payload); err != nil {
@@ -247,7 +247,7 @@ func TestToolResultsAtEndOfConversation(t *testing.T) {
 		]
 	}`)
 
-	result := BuildKiroPayloadFromOpenAI(input, "kiro-model", "", "CLI", false, false)
+	result := BuildKiroPayloadFromOpenAI(input, "kiro-model", "", "CLI")
 
 	var payload KiroPayload
 	if err := json.Unmarshal(result, &payload); err != nil {
@@ -323,7 +323,7 @@ func TestToolResultsFollowedByAssistant(t *testing.T) {
 		]
 	}`)
 
-	result := BuildKiroPayloadFromOpenAI(input, "kiro-model", "", "CLI", false, false)
+	result := BuildKiroPayloadFromOpenAI(input, "kiro-model", "", "CLI")
 
 	var payload KiroPayload
 	if err := json.Unmarshal(result, &payload); err != nil {
@@ -372,7 +372,7 @@ func TestAssistantEndsConversation(t *testing.T) {
 		]
 	}`)
 
-	result := BuildKiroPayloadFromOpenAI(input, "kiro-model", "", "CLI", false, false)
+	result := BuildKiroPayloadFromOpenAI(input, "kiro-model", "", "CLI")
 
 	var payload KiroPayload
 	if err := json.Unmarshal(result, &payload); err != nil {

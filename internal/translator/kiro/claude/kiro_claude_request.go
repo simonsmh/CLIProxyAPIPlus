@@ -48,11 +48,9 @@ func ConvertClaudeRequestToKiro(modelName string, inputRawJSON []byte, stream bo
 // BuildKiroPayload constructs the Kiro API request payload from Claude format.
 // Supports tool calling - tools are passed via userInputMessageContext.
 // origin parameter determines which quota to use: "CLI" for Amazon Q, "AI_EDITOR" for Kiro IDE.
-// isAgentic parameter enables chunked write optimization prompt for -agentic model variants.
-// isChatOnly parameter disables tool calling for -chat model variants (pure conversation mode).
 // Returns the serialized Kiro API request payload.
-func BuildKiroPayload(claudeBody []byte, modelID, profileArn, origin string, isAgentic, isChatOnly bool) []byte {
-	log.Debugf("kiro: BuildKiroPayload called, modelID=%s, origin=%s, isAgentic=%v, isChatOnly=%v", modelID, origin, isAgentic, isChatOnly)
+func BuildKiroPayload(claudeBody []byte, modelID, profileArn, origin string) []byte {
+	log.Debugf("kiro: BuildKiroPayload called, modelID=%s, origin=%s", modelID, origin)
 
 	// Normalize origin value for Kiro API compatibility
 	origin = kirocommon.NormalizeOrigin(origin)
@@ -60,11 +58,7 @@ func BuildKiroPayload(claudeBody []byte, modelID, profileArn, origin string, isA
 
 	messages := gjson.GetBytes(claudeBody, "messages")
 
-	// For chat-only mode, don't include tools
-	var tools gjson.Result
-	if !isChatOnly {
-		tools = gjson.GetBytes(claudeBody, "tools")
-	}
+	tools := gjson.GetBytes(claudeBody, "tools")
 
 	// Extract system prompt
 	systemPrompt := extractSystemPrompt(claudeBody)
@@ -80,14 +74,6 @@ func BuildKiroPayload(claudeBody []byte, modelID, profileArn, origin string, isA
 		systemPrompt = timestampContext
 	}
 	log.Debugf("kiro: injected timestamp context: %s", timestamp)
-
-	// Inject agentic optimization prompt for -agentic model variants
-	if isAgentic {
-		if systemPrompt != "" {
-			systemPrompt += "\n"
-		}
-		systemPrompt += kirocommon.KiroAgenticSystemPrompt
-	}
 
 	// Handle tool_choice parameter - Kiro doesn't support it natively, so we inject system prompt hints
 	// Claude tool_choice values: {"type": "auto/any/tool", "name": "..."}
@@ -132,7 +118,7 @@ func BuildKiroPayload(claudeBody []byte, modelID, profileArn, origin string, isA
 		// To stay robust to those clients, synthesize minimal stub tool specs
 		// from the names referenced in history whenever the client didn't
 		// provide tools but history references them.
-		if len(kiroTools) == 0 && !isChatOnly {
+		if len(kiroTools) == 0 {
 			kiroTools = kirocommon.SynthesizeToolSpecsFromHistory(history)
 			if len(kiroTools) > 0 {
 				log.Infof("kiro: synthesized %d stub tool spec(s) from history (client did not send tools)", len(kiroTools))

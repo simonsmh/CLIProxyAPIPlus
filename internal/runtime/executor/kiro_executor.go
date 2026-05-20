@@ -468,12 +468,12 @@ type KiroExecutor struct {
 // - OpenAI: tools[].function.name, tools[].function.description
 // - Claude: tools[].name, tools[].description
 // Returns the serialized JSON payload.
-func buildKiroPayloadForFormat(body []byte, modelID, profileArn, origin string, isAgentic, isChatOnly bool, sourceFormat sdktranslator.Format) []byte {
-	log.Debugf("kiro: buildKiroPayloadForFormat called, sourceFormat=%s, modelID=%s, origin=%s, isAgentic=%v, isChatOnly=%v", sourceFormat.String(), modelID, origin, isAgentic, isChatOnly)
+func buildKiroPayloadForFormat(body []byte, modelID, profileArn, origin string, sourceFormat sdktranslator.Format) []byte {
+	log.Debugf("kiro: buildKiroPayloadForFormat called, sourceFormat=%s, modelID=%s, origin=%s", sourceFormat.String(), modelID, origin)
 	switch sourceFormat.String() {
 	case "openai":
 		log.Debugf("kiro: using OpenAI payload builder for source format: %s", sourceFormat.String())
-		return kiroopenai.BuildKiroPayloadFromOpenAI(body, modelID, profileArn, origin, isAgentic, isChatOnly)
+		return kiroopenai.BuildKiroPayloadFromOpenAI(body, modelID, profileArn, origin)
 	case "kiro":
 		// Body is already in Kiro format — pass through directly
 		log.Debugf("kiro: body already in Kiro format, passing through directly")
@@ -481,7 +481,7 @@ func buildKiroPayloadForFormat(body []byte, modelID, profileArn, origin string, 
 	default:
 		// Default to Claude format
 		log.Debugf("kiro: using Claude payload builder for source format: %s", sourceFormat.String())
-		return kiroclaude.BuildKiroPayload(body, modelID, profileArn, origin, isAgentic, isChatOnly)
+		return kiroclaude.BuildKiroPayload(body, modelID, profileArn, origin)
 	}
 }
 
@@ -676,13 +676,12 @@ func (e *KiroExecutor) Execute(ctx context.Context, auth *cliproxyauth.Auth, req
 		}
 	}
 
-	// Determine agentic mode and effective profile ARN using helper functions
-	isAgentic, isChatOnly := determineAgenticMode(req.Model)
+	// Determine effective profile ARN
 	effectiveProfileArn := getEffectiveProfileArnWithWarning(auth, profileArn)
 
 	// Execute with retry on 401/403 and 429 (quota exhausted)
 	// Note: currentOrigin and kiroPayload are built inside executeWithRetry for each endpoint
-	resp, err = e.executeWithRetry(ctx, auth, req, opts, accessToken, effectiveProfileArn, nil, body, from, to, reporter, "", kiroModelID, isAgentic, isChatOnly, tokenKey)
+	resp, err = e.executeWithRetry(ctx, auth, req, opts, accessToken, effectiveProfileArn, nil, body, from, to, reporter, "", kiroModelID, tokenKey)
 	return resp, err
 }
 
@@ -692,7 +691,7 @@ func (e *KiroExecutor) Execute(ctx context.Context, auth *cliproxyauth.Auth, req
 // - CodeWhisperer endpoint (AI_EDITOR origin) uses Kiro IDE quota
 // Also supports multi-endpoint fallback similar to Antigravity implementation.
 // tokenKey is used for rate limiting and cooldown tracking.
-func (e *KiroExecutor) executeWithRetry(ctx context.Context, auth *cliproxyauth.Auth, req cliproxyexecutor.Request, opts cliproxyexecutor.Options, accessToken, profileArn string, kiroPayload, body []byte, from, to sdktranslator.Format, reporter *usageReporter, currentOrigin, kiroModelID string, isAgentic, isChatOnly bool, tokenKey string) (cliproxyexecutor.Response, error) {
+func (e *KiroExecutor) executeWithRetry(ctx context.Context, auth *cliproxyauth.Auth, req cliproxyexecutor.Request, opts cliproxyexecutor.Options, accessToken, profileArn string, kiroPayload, body []byte, from, to sdktranslator.Format, reporter *usageReporter, currentOrigin, kiroModelID string, tokenKey string) (cliproxyexecutor.Response, error) {
 	var resp cliproxyexecutor.Response
 	maxRetries := 2 // Allow retries for token refresh + endpoint fallback
 	rateLimiter := kiroauth.GetGlobalRateLimiter()
@@ -708,7 +707,7 @@ func (e *KiroExecutor) executeWithRetry(ctx context.Context, auth *cliproxyauth.
 
 		// Rebuild payload with the correct origin for this endpoint
 		// Each endpoint requires its matching Origin value in the request body
-		kiroPayload = buildKiroPayloadForFormat(body, kiroModelID, profileArn, currentOrigin, isAgentic, isChatOnly, from)
+		kiroPayload = buildKiroPayloadForFormat(body, kiroModelID, profileArn, currentOrigin, from)
 
 		log.Debugf("kiro: trying endpoint %d/%d: %s (Name: %s, Origin: %s)",
 			endpointIdx+1, len(endpointConfigs), url, endpointConfig.Name, currentOrigin)
@@ -874,7 +873,7 @@ func (e *KiroExecutor) executeWithRetry(ctx context.Context, auth *cliproxyauth.
 					}
 					accessToken, profileArn = kiroCredentials(auth)
 					// Rebuild payload with new profile ARN if changed
-					kiroPayload = buildKiroPayloadForFormat(body, kiroModelID, profileArn, currentOrigin, isAgentic, isChatOnly, from)
+					kiroPayload = buildKiroPayloadForFormat(body, kiroModelID, profileArn, currentOrigin, from)
 					if attempt < maxRetries {
 						log.Infof("kiro: token refreshed successfully, retrying request (attempt %d/%d)", attempt+1, maxRetries+1)
 						continue
@@ -941,7 +940,7 @@ func (e *KiroExecutor) executeWithRetry(ctx context.Context, auth *cliproxyauth.
 							// Continue anyway - the token is valid for this request
 						}
 						accessToken, profileArn = kiroCredentials(auth)
-						kiroPayload = buildKiroPayloadForFormat(body, kiroModelID, profileArn, currentOrigin, isAgentic, isChatOnly, from)
+						kiroPayload = buildKiroPayloadForFormat(body, kiroModelID, profileArn, currentOrigin, from)
 						log.Infof("kiro: token refreshed for 403, retrying request")
 						continue
 					}
@@ -1116,13 +1115,12 @@ func (e *KiroExecutor) ExecuteStream(ctx context.Context, auth *cliproxyauth.Aut
 		}
 	}
 
-	// Determine agentic mode and effective profile ARN using helper functions
-	isAgentic, isChatOnly := determineAgenticMode(req.Model)
+	// Determine effective profile ARN
 	effectiveProfileArn := getEffectiveProfileArnWithWarning(auth, profileArn)
 
 	// Execute stream with retry on 401/403 and 429 (quota exhausted)
 	// Note: currentOrigin and kiroPayload are built inside executeStreamWithRetry for each endpoint
-	streamKiro, errStreamKiro := e.executeStreamWithRetry(ctx, auth, req, opts, accessToken, effectiveProfileArn, nil, body, from, reporter, "", kiroModelID, isAgentic, isChatOnly, tokenKey)
+	streamKiro, errStreamKiro := e.executeStreamWithRetry(ctx, auth, req, opts, accessToken, effectiveProfileArn, nil, body, from, reporter, "", kiroModelID, tokenKey)
 	if errStreamKiro != nil {
 		return nil, errStreamKiro
 	}
@@ -1135,7 +1133,7 @@ func (e *KiroExecutor) ExecuteStream(ctx context.Context, auth *cliproxyauth.Aut
 // - CodeWhisperer endpoint (AI_EDITOR origin) uses Kiro IDE quota
 // Also supports multi-endpoint fallback similar to Antigravity implementation.
 // tokenKey is used for rate limiting and cooldown tracking.
-func (e *KiroExecutor) executeStreamWithRetry(ctx context.Context, auth *cliproxyauth.Auth, req cliproxyexecutor.Request, opts cliproxyexecutor.Options, accessToken, profileArn string, kiroPayload, body []byte, from sdktranslator.Format, reporter *usageReporter, currentOrigin, kiroModelID string, isAgentic, isChatOnly bool, tokenKey string) (<-chan cliproxyexecutor.StreamChunk, error) {
+func (e *KiroExecutor) executeStreamWithRetry(ctx context.Context, auth *cliproxyauth.Auth, req cliproxyexecutor.Request, opts cliproxyexecutor.Options, accessToken, profileArn string, kiroPayload, body []byte, from sdktranslator.Format, reporter *usageReporter, currentOrigin, kiroModelID string, tokenKey string) (<-chan cliproxyexecutor.StreamChunk, error) {
 	maxRetries := 2 // Allow retries for token refresh + endpoint fallback
 	rateLimiter := kiroauth.GetGlobalRateLimiter()
 	cooldownMgr := kiroauth.GetGlobalCooldownManager()
@@ -1150,7 +1148,7 @@ func (e *KiroExecutor) executeStreamWithRetry(ctx context.Context, auth *cliprox
 
 		// Rebuild payload with the correct origin for this endpoint
 		// Each endpoint requires its matching Origin value in the request body
-		kiroPayload := buildKiroPayloadForFormat(body, kiroModelID, profileArn, currentOrigin, isAgentic, isChatOnly, from)
+		kiroPayload := buildKiroPayloadForFormat(body, kiroModelID, profileArn, currentOrigin, from)
 
 		log.Debugf("kiro: stream trying endpoint %d/%d: %s (Name: %s, Origin: %s)",
 			endpointIdx+1, len(endpointConfigs), url, endpointConfig.Name, currentOrigin)
@@ -1316,7 +1314,7 @@ func (e *KiroExecutor) executeStreamWithRetry(ctx context.Context, auth *cliprox
 					}
 					accessToken, profileArn = kiroCredentials(auth)
 					// Rebuild payload with new profile ARN if changed
-					kiroPayload = buildKiroPayloadForFormat(body, kiroModelID, profileArn, currentOrigin, isAgentic, isChatOnly, from)
+					kiroPayload = buildKiroPayloadForFormat(body, kiroModelID, profileArn, currentOrigin, from)
 					if attempt < maxRetries {
 						log.Infof("kiro: token refreshed successfully, retrying stream request (attempt %d/%d)", attempt+1, maxRetries+1)
 						continue
@@ -1383,7 +1381,7 @@ func (e *KiroExecutor) executeStreamWithRetry(ctx context.Context, auth *cliprox
 							// Continue anyway - the token is valid for this request
 						}
 						accessToken, profileArn = kiroCredentials(auth)
-						kiroPayload = buildKiroPayloadForFormat(body, kiroModelID, profileArn, currentOrigin, isAgentic, isChatOnly, from)
+						kiroPayload = buildKiroPayloadForFormat(body, kiroModelID, profileArn, currentOrigin, from)
 						log.Infof("kiro: token refreshed for 403, retrying stream request")
 						continue
 					}
@@ -1428,8 +1426,6 @@ func (e *KiroExecutor) executeStreamWithRetry(ctx context.Context, auth *cliprox
 
 				// Kiro API always returns <thinking> tags regardless of request parameters
 				// So we always enable thinking parsing for Kiro responses
-
-
 				e.streamToChannel(ctx, resp.Body, out, from, payloadRequestedModel(opts, req.Model), opts.OriginalRequest, body, reporter)
 			}(httpResp)
 
@@ -1481,15 +1477,6 @@ func kiroCredentials(auth *cliproxyauth.Auth) (accessToken, profileArn string) {
 
 	return accessToken, profileArn
 }
-
-// determineAgenticMode determines if the model is an agentic or chat-only variant.
-// Returns (isAgentic, isChatOnly) based on model name suffixes.
-func determineAgenticMode(model string) (isAgentic, isChatOnly bool) {
-	isAgentic = strings.HasSuffix(model, "-agentic")
-	isChatOnly = strings.HasSuffix(model, "-chat")
-	return isAgentic, isChatOnly
-}
-
 // getEffectiveProfileArnWithWarning suppresses profileArn for builder-id and AWS SSO OIDC auth.
 // Builder-id users (auth_method == "builder-id") and AWS SSO OIDC users (auth_type == "aws_sso_oidc")
 // don't need profileArn — sending it causes 403 errors.
@@ -1522,14 +1509,11 @@ func getEffectiveProfileArnWithWarning(auth *cliproxyauth.Auth, profileArn strin
 //
 //  1. Trim surrounding whitespace and lowercase.
 //  2. Strip the leading "kiro-" or "amazonq-" prefix if present.
-//  3. Strip the trailing "-agentic" suffix (agentic variants share the
-//     underlying backend ID; the agentic behavior is applied separately
-//     via determineAgenticMode).
-//  4. Normalize the version segment from dashes to dots — e.g.
+//  3. Normalize the version segment from dashes to dots — e.g.
 //     "claude-sonnet-4-5" → "claude-sonnet-4.5", "minimax-m2-1" →
 //     "minimax-m2.1". Only the last "-<digit>" pair is rewritten so
 //     identifiers like "qwen3-coder-next" pass through unchanged.
-//  5. Map a few historical dated aliases (e.g. "claude-sonnet-4-5-20250929")
+//  4. Map a few historical dated aliases (e.g. "claude-sonnet-4-5-20250929")
 //     back to their canonical version.
 //
 // Unknown model names are returned as-is rather than silently remapped
@@ -1550,15 +1534,11 @@ func (e *KiroExecutor) mapModelToKiro(model string) string {
 			break
 		}
 	}
-
-	// 2. Strip agentic suffix — agentic variants share the backend ID.
-	m = strings.TrimSuffix(m, "-agentic")
-
-	// 3. Collapse dated aliases (e.g. claude-sonnet-4-5-20250929) to the
+	// 2. Collapse dated aliases (e.g. claude-sonnet-4-5-20250929) to the
 	//    canonical version. Only handles the common 8-digit date suffix.
 	m = trimKiroDateSuffix(m)
 
-	// 4. Normalize final version segment: last "-<digit>" pair becomes "."
+	// 3. Normalize final version segment: last "-<digit>" pair becomes "."
 	//    e.g. "claude-sonnet-4-5" → "claude-sonnet-4.5", but "qwen3-coder-next"
 	//    is left alone because the final segment isn't a digit.
 	m = normalizeKiroVersion(m)
@@ -4574,14 +4554,13 @@ func (e *KiroExecutor) callKiroAndBuffer(
 	log.Debugf("kiro/websearch GAR request: %d bytes", len(body))
 
 	kiroModelID := e.mapModelToKiro(req.Model)
-	isAgentic, isChatOnly := determineAgenticMode(req.Model)
 	effectiveProfileArn := getEffectiveProfileArnWithWarning(auth, profileArn)
 
 	tokenKey := getAccountKey(auth)
 
 	kiroStream, err := e.executeStreamWithRetry(
 		ctx, auth, req, opts, accessToken, effectiveProfileArn,
-		nil, body, from, nil, "", kiroModelID, isAgentic, isChatOnly, tokenKey,
+		nil, body, from, nil, "", kiroModelID, tokenKey,
 	)
 	if err != nil {
 		return nil, err
@@ -4616,7 +4595,6 @@ func (e *KiroExecutor) callKiroDirectStream(
 	body := sdktranslator.TranslateRequest(from, to, req.Model, bytes.Clone(req.Payload), true)
 
 	kiroModelID := e.mapModelToKiro(req.Model)
-	isAgentic, isChatOnly := determineAgenticMode(req.Model)
 	effectiveProfileArn := getEffectiveProfileArnWithWarning(auth, profileArn)
 
 	tokenKey := getAccountKey(auth)
@@ -4627,7 +4605,7 @@ func (e *KiroExecutor) callKiroDirectStream(
 
 	stream, streamErr := e.executeStreamWithRetry(
 		ctx, auth, req, opts, accessToken, effectiveProfileArn,
-		nil, body, from, reporter, "", kiroModelID, isAgentic, isChatOnly, tokenKey,
+		nil, body, from, reporter, "", kiroModelID, tokenKey,
 	)
 	return stream, streamErr
 }
@@ -4666,7 +4644,6 @@ func (e *KiroExecutor) executeNonStreamFallback(
 	body := sdktranslator.TranslateRequest(from, to, req.Model, bytes.Clone(req.Payload), true)
 
 	kiroModelID := e.mapModelToKiro(req.Model)
-	isAgentic, isChatOnly := determineAgenticMode(req.Model)
 	effectiveProfileArn := getEffectiveProfileArnWithWarning(auth, profileArn)
 	tokenKey := getAccountKey(auth)
 
@@ -4674,6 +4651,6 @@ func (e *KiroExecutor) executeNonStreamFallback(
 	var err error
 	defer reporter.trackFailure(ctx, &err)
 
-	resp, err := e.executeWithRetry(ctx, auth, req, opts, accessToken, effectiveProfileArn, nil, body, from, to, reporter, "", kiroModelID, isAgentic, isChatOnly, tokenKey)
+	resp, err := e.executeWithRetry(ctx, auth, req, opts, accessToken, effectiveProfileArn, nil, body, from, to, reporter, "", kiroModelID, tokenKey)
 	return resp, err
 }
