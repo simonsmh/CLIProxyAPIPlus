@@ -7,7 +7,6 @@ import (
 	"encoding/json"
 	"fmt"
 	"strings"
-	"time"
 	"unicode/utf8"
 
 	"github.com/google/uuid"
@@ -61,19 +60,6 @@ func BuildKiroPayloadFromOpenAI(openaiBody []byte, modelID, profileArn, origin s
 
 	// Extract system prompt from messages
 	systemPrompt := extractSystemPromptFromOpenAI(messages)
-
-
-
-	// Inject timestamp context
-	timestamp := time.Now().Format("2006-01-02 15:04:05 MST")
-	timestampContext := fmt.Sprintf("[Context: Current time is %s]", timestamp)
-	if systemPrompt != "" {
-		systemPrompt = timestampContext + "\n\n" + systemPrompt
-	} else {
-		systemPrompt = timestampContext
-	}
-	log.Debugf("kiro-openai: injected timestamp context: %s", timestamp)
-
 	// Handle tool_choice parameter - Kiro doesn't support it natively, so we inject system prompt hints
 	// OpenAI tool_choice values: "none", "auto", "required", or {"type":"function","function":{"name":"..."}}
 	toolChoiceHint := extractToolChoiceHint(openaiBody)

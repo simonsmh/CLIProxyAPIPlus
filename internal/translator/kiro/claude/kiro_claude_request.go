@@ -7,7 +7,6 @@ import (
 	"encoding/json"
 	"fmt"
 	"strings"
-	"time"
 	"unicode/utf8"
 
 	"github.com/google/uuid"
@@ -62,19 +61,6 @@ func BuildKiroPayload(claudeBody []byte, modelID, profileArn, origin string) []b
 
 	// Extract system prompt
 	systemPrompt := extractSystemPrompt(claudeBody)
-
-
-
-	// Inject timestamp context
-	timestamp := time.Now().Format("2006-01-02 15:04:05 MST")
-	timestampContext := fmt.Sprintf("[Context: Current time is %s]", timestamp)
-	if systemPrompt != "" {
-		systemPrompt = timestampContext + "\n\n" + systemPrompt
-	} else {
-		systemPrompt = timestampContext
-	}
-	log.Debugf("kiro: injected timestamp context: %s", timestamp)
-
 	// Handle tool_choice parameter - Kiro doesn't support it natively, so we inject system prompt hints
 	// Claude tool_choice values: {"type": "auto/any/tool", "name": "..."}
 	toolChoiceHint := extractClaudeToolChoiceHint(claudeBody)
