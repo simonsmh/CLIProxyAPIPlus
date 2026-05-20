@@ -63,15 +63,15 @@ type QoderTokenStorage struct {
 // QoderUsageInfo holds the parsed /api/v2/quota/usage response.
 type QoderUsageInfo struct {
 	// UserQuota is the personal credit quota.
-	UserQuota QoderQuota `json:"user_quota"`
+	UserQuota QoderQuota `json:"userQuota"`
 	// OrgResourcePackage is the org-level resource package.
-	OrgResourcePackage QoderQuota `json:"org_resource_package"`
+	OrgResourcePackage QoderQuota `json:"orgResourcePackage"`
 	// TotalUsagePercentage is the combined usage percentage (0–1).
-	TotalUsagePercentage float64 `json:"total_usage_percentage"`
+	TotalUsagePercentage float64 `json:"totalUsagePercentage"`
 	// IsQuotaExceeded indicates whether the quota is exhausted.
-	IsQuotaExceeded bool `json:"is_quota_exceeded"`
+	IsQuotaExceeded bool `json:"isQuotaExceeded"`
 	// ExpiresAt is the quota reset timestamp in milliseconds epoch.
-	ExpiresAt int64 `json:"expires_at"`
+	ExpiresAt int64 `json:"expiresAt"`
 }
 
 // QoderQuota holds a single quota bucket (user or org).

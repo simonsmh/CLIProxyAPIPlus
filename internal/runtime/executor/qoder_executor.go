@@ -924,7 +924,8 @@ func FetchQoderModels(ctx context.Context, auth *cliproxyauth.Auth, cfg *config.
 	log.Infof("qoder: fetched %d models from /algo/api/v2/model/list", len(models))
 
 	// Fetch usage alongside models so the management UI has fresh credit data.
-	go FetchQoderUsage(ctx, auth, cfg)
+	// Use context.Background() so the goroutine outlives the caller's context.
+	go FetchQoderUsage(context.Background(), auth, cfg)
 
 	return models
 }
@@ -989,7 +990,8 @@ func FetchQoderUsage(ctx context.Context, auth *cliproxyauth.Auth, cfg *config.C
 	}
 
 	const usageURL = "https://openapi.qoder.sh/api/v2/quota/usage"
-	req, err := http.NewRequestWithContext(ctx, http.MethodGet, usageURL, nil)
+	log.Debugf("qoder: fetching usage for user %s (token len=%d)", storage.UserID, len(storage.Token))
+	req, err := http.NewRequest(http.MethodGet, usageURL, nil)
 	if err != nil {
 		log.Debugf("qoder: build usage request: %v", err)
 		return nil
@@ -997,7 +999,7 @@ func FetchQoderUsage(ctx context.Context, auth *cliproxyauth.Auth, cfg *config.C
 	req.Header.Set("Authorization", "Bearer "+storage.Token)
 	req.Header.Set("Accept", "application/json")
 
-	httpClient := helps.NewProxyAwareHTTPClient(ctx, cfg, auth, 15*time.Second)
+	httpClient := &http.Client{Timeout: 15 * time.Second}
 	resp, err := httpClient.Do(req)
 	if err != nil {
 		log.Debugf("qoder: usage fetch failed: %v", err)
