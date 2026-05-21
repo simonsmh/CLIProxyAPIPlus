@@ -2172,7 +2172,7 @@
   ],
   "qoder": [
     {
-      "id": "auto",
+      "id": "qoder/auto",
       "object": "model",
       "created": 1767196800,
       "owned_by": "qoder",
@@ -2183,7 +2183,7 @@
       "max_completion_tokens": 65536
     },
     {
-      "id": "ultimate",
+      "id": "qoder/ultimate",
       "object": "model",
       "created": 1767196800,
       "owned_by": "qoder",
@@ -2200,7 +2200,7 @@
       }
     },
     {
-      "id": "performance",
+      "id": "qoder/performance",
       "object": "model",
       "created": 1767196800,
       "owned_by": "qoder",
@@ -2217,7 +2217,7 @@
       }
     },
     {
-      "id": "efficient",
+      "id": "qoder/efficient",
       "object": "model",
       "created": 1767196800,
       "owned_by": "qoder",
@@ -2228,7 +2228,7 @@
       "max_completion_tokens": 16384
     },
     {
-      "id": "lite",
+      "id": "qoder/lite",
       "object": "model",
       "created": 1767196800,
       "owned_by": "qoder",
@@ -2239,7 +2239,7 @@
       "max_completion_tokens": 16384
     },
     {
-      "id": "qmodel",
+      "id": "qoder/qmodel",
       "object": "model",
       "created": 1767196800,
       "owned_by": "qoder",
@@ -2250,7 +2250,7 @@
       "max_completion_tokens": 32768
     },
     {
-      "id": "dmodel",
+      "id": "qoder/dmodel",
       "object": "model",
       "created": 1767196800,
       "owned_by": "qoder",
@@ -2267,7 +2267,7 @@
       }
     },
     {
-      "id": "dfmodel",
+      "id": "qoder/dfmodel",
       "object": "model",
       "created": 1767196800,
       "owned_by": "qoder",
@@ -2278,7 +2278,7 @@
       "max_completion_tokens": 16384
     },
     {
-      "id": "gm51model",
+      "id": "qoder/gm51model",
       "object": "model",
       "created": 1767196800,
       "owned_by": "qoder",
@@ -2295,7 +2295,7 @@
       }
     },
     {
-      "id": "kmodel",
+      "id": "qoder/kmodel",
       "object": "model",
       "created": 1767196800,
       "owned_by": "qoder",
@@ -2312,7 +2312,7 @@
       }
     },
     {
-      "id": "mmodel",
+      "id": "qoder/mmodel",
       "object": "model",
       "created": 1767196800,
       "owned_by": "qoder",

@@ -892,7 +892,7 @@ func FetchQoderModels(ctx context.Context, auth *cliproxyauth.Auth, cfg *config.
 		configs[key] = json.RawMessage(entry.Raw)
 
 		mi := &registry.ModelInfo{
-			ID:            key,
+			ID:            "qoder/" + key,
 			Object:        "model",
 			Created:       now,
 			OwnedBy:       "qoder",
