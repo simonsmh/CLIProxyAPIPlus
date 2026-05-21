@@ -60,27 +60,6 @@ func BuildKiroPayloadFromOpenAI(openaiBody []byte, modelID, profileArn, origin s
 
 	// Extract system prompt from messages
 	systemPrompt := extractSystemPromptFromOpenAI(messages)
-	// Handle tool_choice parameter - Kiro doesn't support it natively, so we inject system prompt hints
-	// OpenAI tool_choice values: "none", "auto", "required", or {"type":"function","function":{"name":"..."}}
-	toolChoiceHint := extractToolChoiceHint(openaiBody)
-	if toolChoiceHint != "" {
-		if systemPrompt != "" {
-			systemPrompt += "\n"
-		}
-		systemPrompt += toolChoiceHint
-		log.Debugf("kiro-openai: injected tool_choice hint into system prompt")
-	}
-
-	// Handle response_format parameter - Kiro doesn't support it natively, so we inject system prompt hints
-	// OpenAI response_format: {"type": "json_object"} or {"type": "json_schema", "json_schema": {...}}
-	responseFormatHint := extractResponseFormatHint(openaiBody)
-	if responseFormatHint != "" {
-		if systemPrompt != "" {
-			systemPrompt += "\n"
-		}
-		systemPrompt += responseFormatHint
-		log.Debugf("kiro-openai: injected response_format hint into system prompt")
-	}
 
 	// Convert OpenAI tools to Kiro format
 	kiroTools := convertOpenAIToolsToKiro(tools)
@@ -716,77 +695,3 @@ func buildFinalContent(content, systemPrompt string, toolResults []KiroToolResul
 
 
 
-// extractToolChoiceHint extracts tool_choice from OpenAI request and returns a system prompt hint.
-// OpenAI tool_choice values:
-// - "none": Don't use any tools
-// - "auto": Model decides (default, no hint needed)
-// - "required": Must use at least one tool
-// - {"type":"function","function":{"name":"..."}} : Must use specific tool
-func extractToolChoiceHint(openaiBody []byte) string {
-	toolChoice := gjson.GetBytes(openaiBody, "tool_choice")
-	if !toolChoice.Exists() {
-		return ""
-	}
-
-	// Handle string values
-	if toolChoice.Type == gjson.String {
-		switch toolChoice.String() {
-		case "none":
-			// Note: When tool_choice is "none", we should ideally not pass tools at all
-			// But since we can't modify tool passing here, we add a strong hint
-			return "[INSTRUCTION: Do NOT use any tools. Respond with text only.]"
-		case "required":
-			return "[INSTRUCTION: You MUST use at least one of the available tools to respond. Do not respond with text only - always make a tool call.]"
-		case "auto":
-			// Default behavior, no hint needed
-			return ""
-		}
-	}
-
-	// Handle object value: {"type":"function","function":{"name":"..."}}
-	if toolChoice.IsObject() {
-		if toolChoice.Get("type").String() == "function" {
-			toolName := toolChoice.Get("function.name").String()
-			if toolName != "" {
-				return fmt.Sprintf("[INSTRUCTION: You MUST use the tool named '%s' to respond. Do not use any other tool or respond with text only.]", toolName)
-			}
-		}
-	}
-
-	return ""
-}
-
-// extractResponseFormatHint extracts response_format from OpenAI request and returns a system prompt hint.
-// OpenAI response_format values:
-// - {"type": "text"}: Default, no hint needed
-// - {"type": "json_object"}: Must respond with valid JSON
-// - {"type": "json_schema", "json_schema": {...}}: Must respond with JSON matching schema
-func extractResponseFormatHint(openaiBody []byte) string {
-	responseFormat := gjson.GetBytes(openaiBody, "response_format")
-	if !responseFormat.Exists() {
-		return ""
-	}
-
-	formatType := responseFormat.Get("type").String()
-	switch formatType {
-	case "json_object":
-		return "[INSTRUCTION: You MUST respond with valid JSON only. Do not include any text before or after the JSON. Do not wrap the JSON in markdown code blocks. Output raw JSON directly.]"
-	case "json_schema":
-		// Extract schema if provided
-		schema := responseFormat.Get("json_schema.schema")
-		if schema.Exists() {
-			schemaStr := schema.Raw
-			// Truncate if too long
-			if len(schemaStr) > 500 {
-				schemaStr = schemaStr[:500] + "..."
-			}
-			return fmt.Sprintf("[INSTRUCTION: You MUST respond with valid JSON that matches this schema: %s. Do not include any text before or after the JSON. Do not wrap the JSON in markdown code blocks. Output raw JSON directly.]", schemaStr)
-		}
-		return "[INSTRUCTION: You MUST respond with valid JSON only. Do not include any text before or after the JSON. Do not wrap the JSON in markdown code blocks. Output raw JSON directly.]"
-	case "text":
-		// Default behavior, no hint needed
-		return ""
-	}
-
-	return ""
-}

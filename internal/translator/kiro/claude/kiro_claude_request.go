@@ -61,16 +61,6 @@ func BuildKiroPayload(claudeBody []byte, modelID, profileArn, origin string) []b
 
 	// Extract system prompt
 	systemPrompt := extractSystemPrompt(claudeBody)
-	// Handle tool_choice parameter - Kiro doesn't support it natively, so we inject system prompt hints
-	// Claude tool_choice values: {"type": "auto/any/tool", "name": "..."}
-	toolChoiceHint := extractClaudeToolChoiceHint(claudeBody)
-	if toolChoiceHint != "" {
-		if systemPrompt != "" {
-			systemPrompt += "\n"
-		}
-		systemPrompt += toolChoiceHint
-		log.Debugf("kiro: injected tool_choice hint into system prompt")
-	}
 
 	// Convert Claude tools to Kiro format
 	kiroTools := convertClaudeToolsToKiro(tools)
@@ -404,33 +394,6 @@ func buildFinalContent(content, systemPrompt string, toolResults []KiroToolResul
 	return finalContent
 }
 
-// extractClaudeToolChoiceHint extracts tool_choice from Claude request and returns a system prompt hint.
-// Claude tool_choice values:
-// - {"type": "auto"}: Model decides (default, no hint needed)
-// - {"type": "any"}: Must use at least one tool
-// - {"type": "tool", "name": "..."}: Must use specific tool
-func extractClaudeToolChoiceHint(claudeBody []byte) string {
-	toolChoice := gjson.GetBytes(claudeBody, "tool_choice")
-	if !toolChoice.Exists() {
-		return ""
-	}
-
-	toolChoiceType := toolChoice.Get("type").String()
-	switch toolChoiceType {
-	case "any":
-		return "[INSTRUCTION: You MUST use at least one of the available tools to respond. Do not respond with text only - always make a tool call.]"
-	case "tool":
-		toolName := toolChoice.Get("name").String()
-		if toolName != "" {
-			return fmt.Sprintf("[INSTRUCTION: You MUST use the tool named '%s' to respond. Do not use any other tool or respond with text only.]", toolName)
-		}
-	case "auto":
-		// Default behavior, no hint needed
-		return ""
-	}
-
-	return ""
-}
 
 // BuildUserMessageStruct builds a user message and extracts tool results
 func BuildUserMessageStruct(msg gjson.Result, modelID, origin string) (KiroUserInputMessage, []KiroToolResult) {
