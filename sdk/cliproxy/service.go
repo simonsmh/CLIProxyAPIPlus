@@ -1250,16 +1250,6 @@ func (s *Service) registerModelsForAuth(a *coreauth.Auth) {
 	case "qoder":
 		models = executor.FetchQoderModels(context.Background(), a, s.cfg)
 		models = applyExcludedModels(models, excluded)
-		// Fetch usage in a detached goroutine so the management UI has fresh
-		// credit data. Copy cfg pointer; auth pointer is stable for the session.
-		authCopy := a
-		cfgCopy := s.cfg
-		go func() {
-			ctx, cancel := context.WithTimeout(context.Background(), 15*time.Second)
-			defer cancel()
-			log.Debugf("qoder: triggering usage fetch for %s", authCopy.ID)
-			executor.FetchQoderUsage(ctx, authCopy, cfgCopy)
-		}()
 	default:
 		// Handle OpenAI-compatibility providers by name using config
 		if s.cfg != nil {

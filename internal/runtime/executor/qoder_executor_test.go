@@ -47,7 +47,7 @@ func TestExecuteStream_InvalidAuthStorage(t *testing.T) {
 	}
 
 	req := cliproxyexecutor.Request{
-		Payload: []byte(`{"model":"gpt-4","messages":[]}`),
+		Payload: []byte(`{"model":"auto","messages":[]}`),
 	}
 
 	opts := cliproxyexecutor.Options{}
@@ -82,7 +82,7 @@ func TestExecuteStream_TokenRefreshFailure(t *testing.T) {
 	}
 
 	req := cliproxyexecutor.Request{
-		Payload: []byte(`{"model":"gpt-4","messages":[]}`),
+		Payload: []byte(`{"model":"auto","messages":[]}`),
 	}
 
 	opts := cliproxyexecutor.Options{}
@@ -158,7 +158,7 @@ func TestExecuteStream_BuildAuthHeadersFailure(t *testing.T) {
 	}
 
 	req := cliproxyexecutor.Request{
-		Payload: []byte(`{"model":"gpt-4","messages":[]}`),
+		Payload: []byte(`{"model":"auto","messages":[]}`),
 	}
 
 	opts := cliproxyexecutor.Options{}
@@ -191,7 +191,7 @@ func TestExecuteStream_HTTPRequestFailure(t *testing.T) {
 	}
 
 	req := cliproxyexecutor.Request{
-		Payload: []byte(`{"model":"gpt-4","messages":[]}`),
+		Payload: []byte(`{"model":"auto","messages":[]}`),
 	}
 
 	opts := cliproxyexecutor.Options{}
@@ -232,7 +232,7 @@ func TestExecuteStream_NonOKResponse(t *testing.T) {
 	}
 
 	req := cliproxyexecutor.Request{
-		Payload: []byte(`{"model":"gpt-4","messages":[]}`),
+		Payload: []byte(`{"model":"auto","messages":[]}`),
 	}
 
 	opts := cliproxyexecutor.Options{}
