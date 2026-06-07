@@ -33,7 +33,7 @@ func TestBuildKiroPayload_HistoryWithToolUseButNoTools(t *testing.T) {
 		]
 	}`
 
-	out := BuildKiroPayload([]byte(claudeReq), "claude-sonnet-4-5", "arn:test", "test")
+	out := BuildKiroPayload([]byte(claudeReq), "claude-sonnet-4-5", "arn:test", "test", "claude-sonnet-4-5")
 	if len(out) == 0 {
 		t.Fatal("expected non-empty payload")
 	}
@@ -79,7 +79,7 @@ func TestBuildKiroPayload_HistoryWithToolUseAndExplicitTools(t *testing.T) {
 		]
 	}`
 
-	out := BuildKiroPayload([]byte(claudeReq), "claude-sonnet-4-5", "arn:test", "test")
+	out := BuildKiroPayload([]byte(claudeReq), "claude-sonnet-4-5", "arn:test", "test", "claude-sonnet-4-5")
 	tools := gjson.GetBytes(out, "conversationState.currentMessage.userInputMessage.userInputMessageContext.tools")
 	if !tools.IsArray() || len(tools.Array()) != 1 {
 		t.Fatalf("expected exactly 1 tool, got: %s", tools.Raw)
@@ -99,7 +99,7 @@ func TestBuildKiroPayload_NoToolsNoHistoryToolUse(t *testing.T) {
 			{"role": "user", "content": "hello"}
 		]
 	}`
-	out := BuildKiroPayload([]byte(claudeReq), "claude-sonnet-4-5", "arn:test", "test")
+	out := BuildKiroPayload([]byte(claudeReq), "claude-sonnet-4-5", "arn:test", "test", "claude-sonnet-4-5")
 	tools := gjson.GetBytes(out, "conversationState.currentMessage.userInputMessage.userInputMessageContext.tools")
 	if tools.Exists() && tools.IsArray() && len(tools.Array()) > 0 {
 		t.Fatalf("did not expect tools to be synthesized for plain chat turn: %s", tools.Raw)

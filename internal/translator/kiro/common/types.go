@@ -7,8 +7,26 @@ package common
 
 // KiroPayload is the top-level request structure for Kiro API.
 type KiroPayload struct {
-	ConversationState KiroConversationState `json:"conversationState"`
-	ProfileArn        string                `json:"profileArn,omitempty"`
+	ConversationState            KiroConversationState             `json:"conversationState"`
+	ProfileArn                   string                            `json:"profileArn,omitempty"`
+	AgentMode                    string                            `json:"agentMode,omitempty"`
+	AdditionalModelRequestFields *KiroAdditionalModelRequestFields `json:"additionalModelRequestFields,omitempty"`
+}
+
+// KiroAdditionalModelRequestFields holds the thinking and output configuration.
+type KiroAdditionalModelRequestFields struct {
+	Thinking     *KiroThinkingConfig `json:"thinking,omitempty"`
+	OutputConfig *KiroOutputConfig   `json:"output_config,omitempty"`
+}
+
+// KiroThinkingConfig holds thinking type.
+type KiroThinkingConfig struct {
+	Type string `json:"type,omitempty"` // "adaptive" or "disabled"
+}
+
+// KiroOutputConfig holds target effort.
+type KiroOutputConfig struct {
+	Effort string `json:"effort,omitempty"` // "low", "medium", "high", "xhigh", "max"
 }
 
 // KiroConversationState holds the conversation context.

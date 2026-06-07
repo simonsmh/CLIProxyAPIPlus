@@ -87,6 +87,9 @@ var endpointAliases = map[string]string{
 	"amazonq":       "amazonq",
 	"q":             "amazonq",
 	"cli":           "amazonq",
+	"kiroruntime":   "kiroruntime",
+	"runtime":       "kiroruntime",
+	"kiro":          "kiroruntime",
 }
 
 func enqueueTranslatedSSE(out chan<- cliproxyexecutor.StreamChunk, chunk []byte) {
@@ -363,14 +366,21 @@ func buildKiroEndpointConfigs(region string) []kiroEndpointConfig {
 	}
 	return []kiroEndpointConfig{
 		{
-			// Primary: Q endpoint - works for all regions and auth types
+			// Primary: Kiro runtime endpoint
+			URL:       fmt.Sprintf("https://runtime.%s.kiro.dev/generateAssistantResponse", region),
+			Origin:    "AI_EDITOR",
+			AmzTarget: "AmazonCodeWhispererStreamingService.GenerateAssistantResponse",
+			Name:      "KiroRuntime",
+		},
+		{
+			// Fallback 1: Q endpoint - works for all regions and auth types
 			URL:       fmt.Sprintf("https://q.%s.amazonaws.com/generateAssistantResponse", region),
 			Origin:    "AI_EDITOR",
 			AmzTarget: "", // Empty = don't set X-Amz-Target header
 			Name:      "AmazonQ",
 		},
 		{
-			// Fallback: CodeWhisperer endpoint (legacy, only works in us-east-1)
+			// Fallback 2: CodeWhisperer endpoint (legacy, only works in us-east-1)
 			URL:       fmt.Sprintf("https://codewhisperer.%s.amazonaws.com/generateAssistantResponse", region),
 			Origin:    "AI_EDITOR",
 			AmzTarget: "AmazonCodeWhispererStreamingService.GenerateAssistantResponse",
@@ -468,12 +478,12 @@ type KiroExecutor struct {
 // - OpenAI: tools[].function.name, tools[].function.description
 // - Claude: tools[].name, tools[].description
 // Returns the serialized JSON payload.
-func buildKiroPayloadForFormat(body []byte, modelID, profileArn, origin string, sourceFormat sdktranslator.Format) []byte {
-	log.Debugf("kiro: buildKiroPayloadForFormat called, sourceFormat=%s, modelID=%s, origin=%s", sourceFormat.String(), modelID, origin)
+func buildKiroPayloadForFormat(body []byte, modelID, profileArn, origin string, sourceFormat sdktranslator.Format, requestedModel string) []byte {
+	log.Debugf("kiro: buildKiroPayloadForFormat called, sourceFormat=%s, modelID=%s, origin=%s, requestedModel=%s", sourceFormat.String(), modelID, origin, requestedModel)
 	switch sourceFormat.String() {
 	case "openai":
 		log.Debugf("kiro: using OpenAI payload builder for source format: %s", sourceFormat.String())
-		return kiroopenai.BuildKiroPayloadFromOpenAI(body, modelID, profileArn, origin)
+		return kiroopenai.BuildKiroPayloadFromOpenAI(body, modelID, profileArn, origin, requestedModel)
 	case "kiro":
 		// Body is already in Kiro format — pass through directly
 		log.Debugf("kiro: body already in Kiro format, passing through directly")
@@ -481,7 +491,7 @@ func buildKiroPayloadForFormat(body []byte, modelID, profileArn, origin string, 
 	default:
 		// Default to Claude format
 		log.Debugf("kiro: using Claude payload builder for source format: %s", sourceFormat.String())
-		return kiroclaude.BuildKiroPayload(body, modelID, profileArn, origin)
+		return kiroclaude.BuildKiroPayload(body, modelID, profileArn, origin, requestedModel)
 	}
 }
 
@@ -707,7 +717,7 @@ func (e *KiroExecutor) executeWithRetry(ctx context.Context, auth *cliproxyauth.
 
 		// Rebuild payload with the correct origin for this endpoint
 		// Each endpoint requires its matching Origin value in the request body
-		kiroPayload = buildKiroPayloadForFormat(body, kiroModelID, profileArn, currentOrigin, from)
+		kiroPayload = buildKiroPayloadForFormat(body, kiroModelID, profileArn, currentOrigin, from, req.Model)
 
 		log.Debugf("kiro: trying endpoint %d/%d: %s (Name: %s, Origin: %s)",
 			endpointIdx+1, len(endpointConfigs), url, endpointConfig.Name, currentOrigin)
@@ -873,7 +883,7 @@ func (e *KiroExecutor) executeWithRetry(ctx context.Context, auth *cliproxyauth.
 					}
 					accessToken, profileArn = kiroCredentials(auth)
 					// Rebuild payload with new profile ARN if changed
-					kiroPayload = buildKiroPayloadForFormat(body, kiroModelID, profileArn, currentOrigin, from)
+					kiroPayload = buildKiroPayloadForFormat(body, kiroModelID, profileArn, currentOrigin, from, req.Model)
 					if attempt < maxRetries {
 						log.Infof("kiro: token refreshed successfully, retrying request (attempt %d/%d)", attempt+1, maxRetries+1)
 						continue
@@ -940,7 +950,7 @@ func (e *KiroExecutor) executeWithRetry(ctx context.Context, auth *cliproxyauth.
 							// Continue anyway - the token is valid for this request
 						}
 						accessToken, profileArn = kiroCredentials(auth)
-						kiroPayload = buildKiroPayloadForFormat(body, kiroModelID, profileArn, currentOrigin, from)
+						kiroPayload = buildKiroPayloadForFormat(body, kiroModelID, profileArn, currentOrigin, from, req.Model)
 						log.Infof("kiro: token refreshed for 403, retrying request")
 						continue
 					}
@@ -1148,7 +1158,7 @@ func (e *KiroExecutor) executeStreamWithRetry(ctx context.Context, auth *cliprox
 
 		// Rebuild payload with the correct origin for this endpoint
 		// Each endpoint requires its matching Origin value in the request body
-		kiroPayload := buildKiroPayloadForFormat(body, kiroModelID, profileArn, currentOrigin, from)
+		kiroPayload := buildKiroPayloadForFormat(body, kiroModelID, profileArn, currentOrigin, from, req.Model)
 
 		log.Debugf("kiro: stream trying endpoint %d/%d: %s (Name: %s, Origin: %s)",
 			endpointIdx+1, len(endpointConfigs), url, endpointConfig.Name, currentOrigin)
@@ -1314,7 +1324,7 @@ func (e *KiroExecutor) executeStreamWithRetry(ctx context.Context, auth *cliprox
 					}
 					accessToken, profileArn = kiroCredentials(auth)
 					// Rebuild payload with new profile ARN if changed
-					kiroPayload = buildKiroPayloadForFormat(body, kiroModelID, profileArn, currentOrigin, from)
+					kiroPayload = buildKiroPayloadForFormat(body, kiroModelID, profileArn, currentOrigin, from, req.Model)
 					if attempt < maxRetries {
 						log.Infof("kiro: token refreshed successfully, retrying stream request (attempt %d/%d)", attempt+1, maxRetries+1)
 						continue
@@ -1381,7 +1391,7 @@ func (e *KiroExecutor) executeStreamWithRetry(ctx context.Context, auth *cliprox
 							// Continue anyway - the token is valid for this request
 						}
 						accessToken, profileArn = kiroCredentials(auth)
-						kiroPayload = buildKiroPayloadForFormat(body, kiroModelID, profileArn, currentOrigin, from)
+						kiroPayload = buildKiroPayloadForFormat(body, kiroModelID, profileArn, currentOrigin, from, req.Model)
 						log.Infof("kiro: token refreshed for 403, retrying stream request")
 						continue
 					}
@@ -1477,6 +1487,7 @@ func kiroCredentials(auth *cliproxyauth.Auth) (accessToken, profileArn string) {
 
 	return accessToken, profileArn
 }
+
 // getEffectiveProfileArnWithWarning suppresses profileArn for builder-id and AWS SSO OIDC auth.
 // Builder-id users (auth_method == "builder-id") and AWS SSO OIDC users (auth_type == "aws_sso_oidc")
 // don't need profileArn — sending it causes 403 errors.

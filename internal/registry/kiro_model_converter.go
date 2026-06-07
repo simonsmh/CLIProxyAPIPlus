@@ -114,8 +114,6 @@ func GenerateAgenticVariants(models []*ModelInfo) []*ModelInfo {
 		return nil
 	}
 
-
-
 	// Pre-allocate result with capacity for both base models and variants
 	result := make([]*ModelInfo, 0, len(models)*2)
 

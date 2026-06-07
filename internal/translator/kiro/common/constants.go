@@ -46,6 +46,4 @@ const (
 	// IMPORTANT: Use a bracketed marker so the model recognizes it as a structural
 	// placeholder rather than conversational content to parrot back.
 	DefaultUserContent = "[continue]"
-
 )
-

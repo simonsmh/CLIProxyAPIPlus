@@ -16,7 +16,6 @@ import (
 	"github.com/tidwall/gjson"
 )
 
-
 type (
 	KiroPayload                  = kirocommon.KiroPayload
 	KiroConversationState        = kirocommon.KiroConversationState
@@ -33,6 +32,9 @@ type (
 	KiroInputSchema              = kirocommon.KiroInputSchema
 	KiroAssistantResponseMessage = kirocommon.KiroAssistantResponseMessage
 	KiroToolUse                  = kirocommon.KiroToolUse
+	KiroAdditionalModelRequestFields = kirocommon.KiroAdditionalModelRequestFields
+	KiroThinkingConfig               = kirocommon.KiroThinkingConfig
+	KiroOutputConfig                 = kirocommon.KiroOutputConfig
 )
 
 // ConvertClaudeRequestToKiro converts a Claude API request to Kiro format.
@@ -48,8 +50,8 @@ func ConvertClaudeRequestToKiro(modelName string, inputRawJSON []byte, stream bo
 // Supports tool calling - tools are passed via userInputMessageContext.
 // origin parameter determines which quota to use: "CLI" for Amazon Q, "AI_EDITOR" for Kiro IDE.
 // Returns the serialized Kiro API request payload.
-func BuildKiroPayload(claudeBody []byte, modelID, profileArn, origin string) []byte {
-	log.Debugf("kiro: BuildKiroPayload called, modelID=%s, origin=%s", modelID, origin)
+func BuildKiroPayload(claudeBody []byte, modelID, profileArn, origin string, requestedModel string) []byte {
+	log.Debugf("kiro: BuildKiroPayload called, modelID=%s, origin=%s, requestedModel=%s", modelID, origin, requestedModel)
 
 	// Normalize origin value for Kiro API compatibility
 	origin = kirocommon.NormalizeOrigin(origin)
@@ -139,6 +141,60 @@ func BuildKiroPayload(claudeBody []byte, modelID, profileArn, origin string) []b
 		conversationID = uuid.New().String()
 	}
 
+	// Extract thinking config only from the request body
+	config := thinking.ExtractThinkingConfigPublic(claudeBody, "claude")
+
+	// Build additionalModelRequestFields if target model is not "auto"
+	var additionalFields *KiroAdditionalModelRequestFields
+	if modelID != "auto" {
+		if config.Mode == thinking.ModeLevel && config.Level != "" {
+			levelStr := strings.ToLower(strings.TrimSpace(string(config.Level)))
+			if levelStr == "minimal" {
+				levelStr = "low"
+			}
+			if levelStr == "auto" {
+				additionalFields = &KiroAdditionalModelRequestFields{
+					Thinking: &KiroThinkingConfig{Type: "adaptive"},
+				}
+			} else if levelStr == "none" {
+				additionalFields = &KiroAdditionalModelRequestFields{
+					Thinking: &KiroThinkingConfig{Type: "disabled"},
+				}
+			} else if levelStr == "low" || levelStr == "medium" || levelStr == "high" || levelStr == "xhigh" || levelStr == "max" {
+				additionalFields = &KiroAdditionalModelRequestFields{
+					Thinking:     &KiroThinkingConfig{Type: "adaptive"},
+					OutputConfig: &KiroOutputConfig{Effort: levelStr},
+				}
+			}
+		} else if config.Mode == thinking.ModeBudget {
+			levelStr, ok := thinking.ConvertBudgetToLevel(config.Budget)
+			if ok {
+				levelStr = strings.ToLower(strings.TrimSpace(levelStr))
+				if levelStr == "minimal" {
+					levelStr = "low"
+				}
+				if levelStr == "none" {
+					additionalFields = &KiroAdditionalModelRequestFields{
+						Thinking: &KiroThinkingConfig{Type: "disabled"},
+					}
+				} else if levelStr == "low" || levelStr == "medium" || levelStr == "high" || levelStr == "xhigh" || levelStr == "max" {
+					additionalFields = &KiroAdditionalModelRequestFields{
+						Thinking:     &KiroThinkingConfig{Type: "adaptive"},
+						OutputConfig: &KiroOutputConfig{Effort: levelStr},
+					}
+				}
+			}
+		} else if config.Mode == thinking.ModeNone {
+			additionalFields = &KiroAdditionalModelRequestFields{
+				Thinking: &KiroThinkingConfig{Type: "disabled"},
+			}
+		} else if config.Mode == thinking.ModeAuto {
+			additionalFields = &KiroAdditionalModelRequestFields{
+				Thinking: &KiroThinkingConfig{Type: "adaptive"},
+			}
+		}
+	}
+
 	payload := KiroPayload{
 		ConversationState: KiroConversationState{
 			AgentTaskType:   "vibe",
@@ -147,7 +203,9 @@ func BuildKiroPayload(claudeBody []byte, modelID, profileArn, origin string) []b
 			CurrentMessage:  currentMessage,
 			History:         history,
 		},
-		ProfileArn: profileArn,
+		ProfileArn:                   profileArn,
+		AgentMode:                    "vibe",
+		AdditionalModelRequestFields: additionalFields,
 	}
 
 	// Only set AgentContinuationID if client provided
@@ -180,10 +238,6 @@ func extractSystemPrompt(claudeBody []byte) string {
 	}
 	return systemField.String()
 }
-
-
-
-
 
 // convertClaudeToolsToKiro converts Claude tools to Kiro format
 func convertClaudeToolsToKiro(tools gjson.Result) []KiroToolWrapper {
@@ -394,7 +448,6 @@ func buildFinalContent(content, systemPrompt string, toolResults []KiroToolResul
 	return finalContent
 }
 
-
 // BuildUserMessageStruct builds a user message and extracts tool results
 func BuildUserMessageStruct(msg gjson.Result, modelID, origin string) (KiroUserInputMessage, []KiroToolResult) {
 	content := msg.Get("content")
@@ -556,4 +609,3 @@ func BuildAssistantMessageStruct(msg gjson.Result) KiroAssistantResponseMessage 
 		ToolUses: toolUses,
 	}
 }
-

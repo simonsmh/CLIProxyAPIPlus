@@ -575,32 +575,32 @@ func TestGetKiroAPIEndpoint(t *testing.T) {
 		{
 			name:     "Empty region - defaults to us-east-1",
 			region:   "",
-			expected: "https://q.us-east-1.amazonaws.com",
+			expected: "https://management.us-east-1.kiro.dev",
 		},
 		{
 			name:     "us-east-1",
 			region:   "us-east-1",
-			expected: "https://q.us-east-1.amazonaws.com",
+			expected: "https://management.us-east-1.kiro.dev",
 		},
 		{
 			name:     "us-west-2",
 			region:   "us-west-2",
-			expected: "https://q.us-west-2.amazonaws.com",
+			expected: "https://management.us-west-2.kiro.dev",
 		},
 		{
 			name:     "ap-southeast-1",
 			region:   "ap-southeast-1",
-			expected: "https://q.ap-southeast-1.amazonaws.com",
+			expected: "https://management.ap-southeast-1.kiro.dev",
 		},
 		{
 			name:     "eu-west-1",
 			region:   "eu-west-1",
-			expected: "https://q.eu-west-1.amazonaws.com",
+			expected: "https://management.eu-west-1.kiro.dev",
 		},
 		{
 			name:     "cn-north-1",
 			region:   "cn-north-1",
-			expected: "https://q.cn-north-1.amazonaws.com",
+			expected: "https://management.cn-north-1.kiro.dev",
 		},
 	}
 
@@ -623,27 +623,27 @@ func TestGetKiroAPIEndpointFromProfileArn(t *testing.T) {
 		{
 			name:       "Empty ARN - defaults to us-east-1",
 			profileArn: "",
-			expected:   "https://q.us-east-1.amazonaws.com",
+			expected:   "https://management.us-east-1.kiro.dev",
 		},
 		{
 			name:       "Invalid ARN - defaults to us-east-1",
 			profileArn: "invalid-arn",
-			expected:   "https://q.us-east-1.amazonaws.com",
+			expected:   "https://management.us-east-1.kiro.dev",
 		},
 		{
 			name:       "Valid ARN - us-east-1",
 			profileArn: "arn:aws:codewhisperer:us-east-1:123456789012:profile/ABC",
-			expected:   "https://q.us-east-1.amazonaws.com",
+			expected:   "https://management.us-east-1.kiro.dev",
 		},
 		{
 			name:       "Valid ARN - ap-southeast-1",
 			profileArn: "arn:aws:codewhisperer:ap-southeast-1:123456789012:profile/ABC",
-			expected:   "https://q.ap-southeast-1.amazonaws.com",
+			expected:   "https://management.ap-southeast-1.kiro.dev",
 		},
 		{
 			name:       "Valid ARN - eu-central-1",
 			profileArn: "arn:aws:codewhisperer:eu-central-1:123456789012:profile/ABC",
-			expected:   "https://q.eu-central-1.amazonaws.com",
+			expected:   "https://management.eu-central-1.kiro.dev",
 		},
 	}
 

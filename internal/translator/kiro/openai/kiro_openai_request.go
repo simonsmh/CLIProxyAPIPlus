@@ -32,6 +32,9 @@ type (
 	KiroInputSchema              = kirocommon.KiroInputSchema
 	KiroAssistantResponseMessage = kirocommon.KiroAssistantResponseMessage
 	KiroToolUse                  = kirocommon.KiroToolUse
+	KiroAdditionalModelRequestFields = kirocommon.KiroAdditionalModelRequestFields
+	KiroThinkingConfig               = kirocommon.KiroThinkingConfig
+	KiroOutputConfig                 = kirocommon.KiroOutputConfig
 )
 
 // ConvertOpenAIRequestToKiro converts an OpenAI Chat Completions request to Kiro format.
@@ -47,8 +50,8 @@ func ConvertOpenAIRequestToKiro(modelName string, inputRawJSON []byte, stream bo
 // Supports tool calling - tools are passed via userInputMessageContext.
 // origin parameter determines which quota to use: "CLI" for Amazon Q, "AI_EDITOR" for Kiro IDE.
 // Returns the serialized Kiro API request payload.
-func BuildKiroPayloadFromOpenAI(openaiBody []byte, modelID, profileArn, origin string) []byte {
-	log.Debugf("kiro-openai: BuildKiroPayloadFromOpenAI called, modelID=%s, origin=%s", modelID, origin)
+func BuildKiroPayloadFromOpenAI(openaiBody []byte, modelID, profileArn, origin string, requestedModel string) []byte {
+	log.Debugf("kiro-openai: BuildKiroPayloadFromOpenAI called, modelID=%s, origin=%s, requestedModel=%s", modelID, origin, requestedModel)
 
 	// Normalize origin value for Kiro API compatibility
 	origin = kirocommon.NormalizeOrigin(origin)
@@ -127,6 +130,60 @@ func BuildKiroPayloadFromOpenAI(openaiBody []byte, modelID, profileArn, origin s
 		conversationID = uuid.New().String()
 	}
 
+	// Extract thinking config only from the request body
+	config := thinking.ExtractThinkingConfigPublic(openaiBody, "openai")
+
+	// Build additionalModelRequestFields if target model is not "auto"
+	var additionalFields *KiroAdditionalModelRequestFields
+	if modelID != "auto" {
+		if config.Mode == thinking.ModeLevel && config.Level != "" {
+			levelStr := strings.ToLower(strings.TrimSpace(string(config.Level)))
+			if levelStr == "minimal" {
+				levelStr = "low"
+			}
+			if levelStr == "auto" {
+				additionalFields = &KiroAdditionalModelRequestFields{
+					Thinking: &KiroThinkingConfig{Type: "adaptive"},
+				}
+			} else if levelStr == "none" {
+				additionalFields = &KiroAdditionalModelRequestFields{
+					Thinking: &KiroThinkingConfig{Type: "disabled"},
+				}
+			} else if levelStr == "low" || levelStr == "medium" || levelStr == "high" || levelStr == "xhigh" || levelStr == "max" {
+				additionalFields = &KiroAdditionalModelRequestFields{
+					Thinking:     &KiroThinkingConfig{Type: "adaptive"},
+					OutputConfig: &KiroOutputConfig{Effort: levelStr},
+				}
+			}
+		} else if config.Mode == thinking.ModeBudget {
+			levelStr, ok := thinking.ConvertBudgetToLevel(config.Budget)
+			if ok {
+				levelStr = strings.ToLower(strings.TrimSpace(levelStr))
+				if levelStr == "minimal" {
+					levelStr = "low"
+				}
+				if levelStr == "none" {
+					additionalFields = &KiroAdditionalModelRequestFields{
+						Thinking: &KiroThinkingConfig{Type: "disabled"},
+					}
+				} else if levelStr == "low" || levelStr == "medium" || levelStr == "high" || levelStr == "xhigh" || levelStr == "max" {
+					additionalFields = &KiroAdditionalModelRequestFields{
+						Thinking:     &KiroThinkingConfig{Type: "adaptive"},
+						OutputConfig: &KiroOutputConfig{Effort: levelStr},
+					}
+				}
+			}
+		} else if config.Mode == thinking.ModeNone {
+			additionalFields = &KiroAdditionalModelRequestFields{
+				Thinking: &KiroThinkingConfig{Type: "disabled"},
+			}
+		} else if config.Mode == thinking.ModeAuto {
+			additionalFields = &KiroAdditionalModelRequestFields{
+				Thinking: &KiroThinkingConfig{Type: "adaptive"},
+			}
+		}
+	}
+
 	payload := KiroPayload{
 		ConversationState: KiroConversationState{
 			AgentTaskType:   "vibe",
@@ -135,7 +192,9 @@ func BuildKiroPayloadFromOpenAI(openaiBody []byte, modelID, profileArn, origin s
 			CurrentMessage:  currentMessage,
 			History:         history,
 		},
-		ProfileArn: profileArn,
+		ProfileArn:                   profileArn,
+		AgentMode:                    "vibe",
+		AdditionalModelRequestFields: additionalFields,
 	}
 
 	// Only set AgentContinuationID if client provided
@@ -177,7 +236,6 @@ func extractSystemPromptFromOpenAI(messages gjson.Result) string {
 
 	return strings.Join(systemParts, "\n")
 }
-
 
 // convertOpenAIToolsToKiro converts OpenAI tools to Kiro format
 func convertOpenAIToolsToKiro(tools gjson.Result) []KiroToolWrapper {
@@ -692,6 +750,3 @@ func buildFinalContent(content, systemPrompt string, toolResults []KiroToolResul
 
 	return finalContent
 }
-
-
-

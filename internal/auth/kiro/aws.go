@@ -647,7 +647,7 @@ func GetKiroAPIEndpoint(region string) string {
 	if region == "" {
 		region = DefaultKiroRegion
 	}
-	return "https://q." + region + ".amazonaws.com"
+	return "https://management." + region + ".kiro.dev"
 }
 
 // GetKiroAPIEndpointFromProfileArn extracts region from profileArn and returns the endpoint.

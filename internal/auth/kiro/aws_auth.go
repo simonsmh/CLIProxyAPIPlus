@@ -116,11 +116,32 @@ func (k *KiroAuth) makeRequest(ctx context.Context, path string, tokenData *Kiro
 	// Get endpoint from profileArn (defaults to us-east-1 if empty)
 	profileArn := queryParams["profileArn"]
 	endpoint := GetKiroAPIEndpointFromProfileArn(profileArn)
-	url := buildURL(endpoint, path, queryParams)
 
-	req, err := http.NewRequestWithContext(ctx, http.MethodGet, url, nil)
-	if err != nil {
-		return nil, fmt.Errorf("failed to create request: %w", err)
+	var req *http.Request
+	var err error
+
+	if path == pathListAvailableModels {
+		url := endpoint + "/"
+		bodyData := map[string]string{
+			"origin":     "KIRO_CLI",
+			"profileArn": profileArn,
+		}
+		jsonBytes, marshalErr := json.Marshal(bodyData)
+		if marshalErr != nil {
+			return nil, fmt.Errorf("failed to marshal request: %w", marshalErr)
+		}
+		req, err = http.NewRequestWithContext(ctx, http.MethodPost, url, strings.NewReader(string(jsonBytes)))
+		if err != nil {
+			return nil, fmt.Errorf("failed to create request: %w", err)
+		}
+		req.Header.Set("Content-Type", "application/json")
+		req.Header.Set("X-Amz-Target", "AmazonCodeWhispererService.ListAvailableModels")
+	} else {
+		url := buildURL(endpoint, path, queryParams)
+		req, err = http.NewRequestWithContext(ctx, http.MethodGet, url, nil)
+		if err != nil {
+			return nil, fmt.Errorf("failed to create request: %w", err)
+		}
 	}
 
 	accountKey := GetAccountKey(tokenData.ClientID, tokenData.RefreshToken)

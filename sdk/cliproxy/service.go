@@ -2716,5 +2716,3 @@ func formatKiroDisplayName(modelName string, rateMultiplier float64) string {
 
 	return displayName
 }
-
-
