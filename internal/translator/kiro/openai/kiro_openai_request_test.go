@@ -379,9 +379,9 @@ func TestAssistantEndsConversation(t *testing.T) {
 		t.Fatalf("Failed to unmarshal result: %v", err)
 	}
 
-	// When assistant is last, a "Continue" user message should be created
-	if payload.ConversationState.CurrentMessage.UserInputMessage.Content == "" {
-		t.Error("Expected a 'Continue' message to be created when assistant is last")
+	// When assistant is last, a continuation user message should be created with empty content
+	if payload.ConversationState.CurrentMessage.UserInputMessage.Content != "" {
+		t.Errorf("Expected a continuation message with empty content when assistant is last, got %q", payload.ConversationState.CurrentMessage.UserInputMessage.Content)
 	}
 }
 

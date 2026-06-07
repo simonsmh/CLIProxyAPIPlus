@@ -17,21 +17,21 @@ import (
 )
 
 type (
-	KiroPayload                  = kirocommon.KiroPayload
-	KiroConversationState        = kirocommon.KiroConversationState
-	KiroCurrentMessage           = kirocommon.KiroCurrentMessage
-	KiroHistoryMessage           = kirocommon.KiroHistoryMessage
-	KiroImage                    = kirocommon.KiroImage
-	KiroImageSource              = kirocommon.KiroImageSource
-	KiroUserInputMessage         = kirocommon.KiroUserInputMessage
-	KiroUserInputMessageContext  = kirocommon.KiroUserInputMessageContext
-	KiroToolResult               = kirocommon.KiroToolResult
-	KiroTextContent              = kirocommon.KiroTextContent
-	KiroToolWrapper              = kirocommon.KiroToolWrapper
-	KiroToolSpecification        = kirocommon.KiroToolSpecification
-	KiroInputSchema              = kirocommon.KiroInputSchema
-	KiroAssistantResponseMessage = kirocommon.KiroAssistantResponseMessage
-	KiroToolUse                  = kirocommon.KiroToolUse
+	KiroPayload                      = kirocommon.KiroPayload
+	KiroConversationState            = kirocommon.KiroConversationState
+	KiroCurrentMessage               = kirocommon.KiroCurrentMessage
+	KiroHistoryMessage               = kirocommon.KiroHistoryMessage
+	KiroImage                        = kirocommon.KiroImage
+	KiroImageSource                  = kirocommon.KiroImageSource
+	KiroUserInputMessage             = kirocommon.KiroUserInputMessage
+	KiroUserInputMessageContext      = kirocommon.KiroUserInputMessageContext
+	KiroToolResult                   = kirocommon.KiroToolResult
+	KiroTextContent                  = kirocommon.KiroTextContent
+	KiroToolWrapper                  = kirocommon.KiroToolWrapper
+	KiroToolSpecification            = kirocommon.KiroToolSpecification
+	KiroInputSchema                  = kirocommon.KiroInputSchema
+	KiroAssistantResponseMessage     = kirocommon.KiroAssistantResponseMessage
+	KiroToolUse                      = kirocommon.KiroToolUse
 	KiroAdditionalModelRequestFields = kirocommon.KiroAdditionalModelRequestFields
 	KiroThinkingConfig               = kirocommon.KiroThinkingConfig
 	KiroOutputConfig                 = kirocommon.KiroOutputConfig
@@ -120,12 +120,6 @@ func BuildKiroPayload(claudeBody []byte, modelID, profileArn, origin string, req
 			fallbackContent = systemPrompt
 		} else {
 			log.Debugf("kiro: no system prompt present in fallback user message")
-		}
-		// CRITICAL: Kiro API requires non-empty content for currentMessage.
-		// Use DefaultUserContent to avoid "Improperly formed request" 400 error.
-		if strings.TrimSpace(fallbackContent) == "" {
-			fallbackContent = kirocommon.DefaultUserContent
-			log.Debugf("kiro: fallback user message content was empty, using default: %s", fallbackContent)
 		}
 		currentMessage = KiroCurrentMessage{UserInputMessage: KiroUserInputMessage{
 			Content: fallbackContent,
@@ -322,18 +316,6 @@ func processMessages(messages gjson.Result, modelID, origin string) ([]KiroHisto
 
 		if role == "user" {
 			userMsg, toolResults := BuildUserMessageStruct(msg, modelID, origin)
-			// CRITICAL: Kiro API requires content to be non-empty for ALL user messages
-			// This includes both history messages and the current message.
-			// When user message contains only tool_result (no text), content will be empty.
-			// This commonly happens in compaction requests from OpenCode.
-			if strings.TrimSpace(userMsg.Content) == "" {
-				if len(toolResults) > 0 {
-					userMsg.Content = kirocommon.DefaultUserContentWithToolResults
-				} else {
-					userMsg.Content = kirocommon.DefaultUserContent
-				}
-				log.Debugf("kiro: user content was empty, using default: %s", userMsg.Content)
-			}
 			if isLastMessage {
 				currentUserMsg = &userMsg
 				currentToolResults = toolResults
@@ -356,7 +338,7 @@ func processMessages(messages gjson.Result, modelID, origin string) ([]KiroHisto
 				})
 				// Create a continuation user message as currentMessage
 				currentUserMsg = &KiroUserInputMessage{
-					Content: kirocommon.DefaultUserContent,
+					Content: "",
 					ModelID: modelID,
 					Origin:  origin,
 				}
@@ -434,16 +416,6 @@ func buildFinalContent(content, systemPrompt string, toolResults []KiroToolResul
 
 	contentBuilder.WriteString(content)
 	finalContent := contentBuilder.String()
-
-	// CRITICAL: Kiro API requires content to be non-empty
-	if strings.TrimSpace(finalContent) == "" {
-		if len(toolResults) > 0 {
-			finalContent = kirocommon.DefaultUserContentWithToolResults
-		} else {
-			finalContent = kirocommon.DefaultUserContent
-		}
-		log.Debugf("kiro: content was empty, using default: %s", finalContent)
-	}
 
 	return finalContent
 }

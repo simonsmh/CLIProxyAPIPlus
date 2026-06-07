@@ -34,16 +34,4 @@ const (
 	// IMPORTANT: Use a bracketed marker so the model recognizes it as a structural
 	// placeholder rather than conversational content to parrot back.
 	DefaultAssistantContent = "[empty]"
-
-	// DefaultUserContentWithToolResults is the fallback content for user messages
-	// that have only tool_result (no text). Kiro API requires non-empty content.
-	// IMPORTANT: Use a bracketed marker so the model recognizes it as a structural
-	// placeholder rather than conversational content to parrot back.
-	DefaultUserContentWithToolResults = "[tool_result]"
-
-	// DefaultUserContent is the fallback content for user messages
-	// that have no content at all. Kiro API requires non-empty content.
-	// IMPORTANT: Use a bracketed marker so the model recognizes it as a structural
-	// placeholder rather than conversational content to parrot back.
-	DefaultUserContent = "[continue]"
 )
