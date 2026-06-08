@@ -9,15 +9,15 @@ import (
 	log "github.com/sirupsen/logrus"
 )
 
-// DoKiroLogin triggers the Kiro authentication flow with Google OAuth.
-// This is the default login method (same as --kiro-google-login).
+// DoKiroLogin triggers the Kiro authentication flow with AWS Builder ID (authorization code flow).
+// This is the default login method.
 //
 // Parameters:
 //   - cfg: The application configuration
 //   - options: Login options including Prompt field
 func DoKiroLogin(cfg *config.Config, options *LoginOptions) {
-	// Use Google login as default
-	DoKiroGoogleLogin(cfg, options)
+	// Use AWS Builder ID (auth code flow) as default since Google login is restricted
+	DoKiroAWSAuthCodeLogin(cfg, options)
 }
 
 // DoKiroGoogleLogin triggers Kiro authentication with Google OAuth.
