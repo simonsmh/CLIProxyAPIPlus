@@ -35,7 +35,7 @@ const (
 	socialAuthTimeout = 10 * time.Minute
 
 	// Default callback port for social auth HTTP server
-	socialAuthCallbackPort = 9876
+	socialAuthCallbackPort = 3128
 )
 
 // SocialProvider represents the social login provider.
@@ -74,9 +74,10 @@ type RefreshTokenRequest struct {
 
 // WebCallbackResult contains the OAuth callback result from HTTP server.
 type WebCallbackResult struct {
-	Code  string
-	State string
-	Error string
+	Code        string
+	State       string
+	Error       string
+	RedirectURI string
 }
 
 // SocialAuthClient handles social authentication with Kiro.
@@ -110,17 +111,13 @@ func (c *SocialAuthClient) startWebCallbackServer(ctx context.Context, expectedS
 	// Try to find an available port - use localhost like Kiro does
 	listener, err := net.Listen("tcp", fmt.Sprintf("localhost:%d", socialAuthCallbackPort))
 	if err != nil {
-		// Try with dynamic port (RFC 8252 allows dynamic ports for native apps)
-		log.Warnf("kiro social auth: default port %d is busy, falling back to dynamic port", socialAuthCallbackPort)
-		listener, err = net.Listen("tcp", "localhost:0")
-		if err != nil {
-			return "", nil, fmt.Errorf("failed to start callback server: %w", err)
-		}
+		return "", nil, fmt.Errorf("failed to start callback server on port %d: %w", socialAuthCallbackPort, err)
 	}
 
 	port := listener.Addr().(*net.TCPAddr).Port
-	// Use http scheme for local callback server
-	redirectURI := fmt.Sprintf("http://localhost:%d/oauth/callback", port)
+	// Use http scheme for local callback server.
+	// Kiro's registered Cognito redirect URI is http://localhost:3128
+	redirectURI := fmt.Sprintf("http://localhost:%d", port)
 	resultChan := make(chan WebCallbackResult, 1)
 
 	server := &http.Server{
@@ -128,7 +125,13 @@ func (c *SocialAuthClient) startWebCallbackServer(ctx context.Context, expectedS
 	}
 
 	mux := http.NewServeMux()
-	mux.HandleFunc("/oauth/callback", func(w http.ResponseWriter, r *http.Request) {
+	mux.HandleFunc("/", func(w http.ResponseWriter, r *http.Request) {
+		// Only handle root path, oauth/callback, or signin/callback
+		if r.URL.Path != "/" && r.URL.Path != "/oauth/callback" && r.URL.Path != "/signin/callback" {
+			http.NotFound(w, r)
+			return
+		}
+
 		code := r.URL.Query().Get("code")
 		state := r.URL.Query().Get("state")
 		errParam := r.URL.Query().Get("error")
@@ -158,7 +161,22 @@ func (c *SocialAuthClient) startWebCallbackServer(ctx context.Context, expectedS
 <html><head><title>Login Successful</title></head>
 <body><h1>Login Successful!</h1><p>You can close this window and return to the terminal.</p>
 <script>window.close();</script></body></html>`)
-		resultChan <- WebCallbackResult{Code: code, State: state}
+
+		loginOption := r.URL.Query().Get("login_option")
+		// The actual redirect URI registered on AWS Cognito includes query parameters
+		path := r.URL.Path
+		if path == "/" {
+			path = ""
+		}
+		actualRedirectURI := fmt.Sprintf("http://localhost:3128%s", path)
+		if loginOption != "" {
+			actualRedirectURI = fmt.Sprintf("%s?login_option=%s", actualRedirectURI, loginOption)
+		} else {
+			// default to google if none specified
+			actualRedirectURI = fmt.Sprintf("%s?login_option=google", actualRedirectURI)
+		}
+
+		resultChan <- WebCallbackResult{Code: code, State: state, RedirectURI: actualRedirectURI}
 	})
 
 	server.Handler = mux
@@ -208,15 +226,13 @@ func generateStateParam() (string, error) {
 
 // buildLoginURL constructs the Kiro OAuth login URL.
 // The login endpoint expects a GET request with query parameters.
-// Format: /login?idp=Google&redirect_uri=...&code_challenge=...&code_challenge_method=S256&state=...&prompt=select_account
-// The prompt=select_account parameter forces the account selection screen even if already logged in.
 func (c *SocialAuthClient) buildLoginURL(provider, redirectURI, codeChallenge, state string) string {
-	return fmt.Sprintf("%s/login?idp=%s&redirect_uri=%s&code_challenge=%s&code_challenge_method=S256&state=%s&prompt=select_account",
-		kiroAuthServiceEndpoint,
-		provider,
-		url.QueryEscape(redirectURI),
-		codeChallenge,
+	loginOption := strings.ToLower(provider)
+	return fmt.Sprintf("https://app.kiro.dev/signin?state=%s&code_challenge=%s&code_challenge_method=S256&redirect_uri=%s&redirect_from=kirocli&login_option=%s",
 		state,
+		codeChallenge,
+		url.QueryEscape(redirectURI),
+		loginOption,
 	)
 }
 
@@ -406,7 +422,7 @@ func (c *SocialAuthClient) LoginWithSocial(ctx context.Context, provider SocialP
 		tokenReq := &CreateTokenRequest{
 			Code:         callback.Code,
 			CodeVerifier: codeVerifier,
-			RedirectURI:  redirectURI, // Use HTTP redirect URI, not kiro:// protocol
+			RedirectURI:  callback.RedirectURI,
 		}
 
 		tokenResp, err := c.CreateToken(ctx, tokenReq)
