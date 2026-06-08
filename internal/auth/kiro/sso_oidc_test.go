@@ -32,7 +32,7 @@ func TestTryListAvailableProfiles_UsesClientIDForAccountKey(t *testing.T) {
 		httpClient: &http.Client{Transport: rt},
 	}
 
-	profileArn := client.tryListAvailableProfiles(context.Background(), "access-token", "client-id-123", "refresh-token-456")
+	profileArn := client.tryListAvailableProfiles(context.Background(), "access-token", "client-id-123", "refresh-token-456", "us-east-1")
 	if profileArn == "" {
 		t.Fatal("expected profileArn, got empty result")
 	}
@@ -52,7 +52,7 @@ func TestTryListAvailableProfiles_UsesRefreshTokenWhenClientIDMissing(t *testing
 		httpClient: &http.Client{Transport: rt},
 	}
 
-	profileArn := client.tryListAvailableProfiles(context.Background(), "access-token", "", "refresh-token-789")
+	profileArn := client.tryListAvailableProfiles(context.Background(), "access-token", "", "refresh-token-789", "us-east-1")
 	if profileArn == "" {
 		t.Fatal("expected profileArn, got empty result")
 	}

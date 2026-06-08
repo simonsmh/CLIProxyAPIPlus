@@ -377,7 +377,7 @@ func (h *OAuthWebHandler) pollForToken(ctx context.Context, session *webAuthSess
 			// Fetch profileArn for IDC
 			var profileArn string
 			if session.authMethod == "idc" {
-				profileArn = session.ssoClient.FetchProfileArn(ctx, tokenResp.AccessToken, session.clientID, tokenResp.RefreshToken)
+				profileArn = session.ssoClient.FetchProfileArn(ctx, tokenResp.AccessToken, session.clientID, tokenResp.RefreshToken, session.region)
 			}
 
 			email := FetchUserEmailWithFallback(ctx, h.cfg, tokenResp.AccessToken, session.clientID, tokenResp.RefreshToken)

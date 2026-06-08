@@ -451,7 +451,7 @@ func (c *SSOOIDCClient) LoginWithIDC(ctx context.Context, startURL, region strin
 
 			// Step 5: Get profile ARN from CodeWhisperer API
 			fmt.Println("Fetching profile information...")
-			profileArn := c.FetchProfileArn(ctx, tokenResp.AccessToken, regResp.ClientID, tokenResp.RefreshToken)
+			profileArn := c.FetchProfileArn(ctx, tokenResp.AccessToken, regResp.ClientID, tokenResp.RefreshToken, region)
 
 			// Fetch user email
 			email := FetchUserEmailWithFallback(ctx, c.cfg, tokenResp.AccessToken, regResp.ClientID, tokenResp.RefreshToken)
@@ -952,16 +952,16 @@ func (c *SSOOIDCClient) tryUserInfoEndpoint(ctx context.Context, accessToken str
 
 // FetchProfileArn fetches the profile ARN from ListAvailableProfiles API.
 // This is used to get profileArn for imported accounts that may not have it.
-func (c *SSOOIDCClient) FetchProfileArn(ctx context.Context, accessToken, clientID, refreshToken string) string {
-	profileArn := c.tryListAvailableProfiles(ctx, accessToken, clientID, refreshToken)
+func (c *SSOOIDCClient) FetchProfileArn(ctx context.Context, accessToken, clientID, refreshToken, region string) string {
+	profileArn := c.tryListAvailableProfiles(ctx, accessToken, clientID, refreshToken, region)
 	if profileArn != "" {
 		return profileArn
 	}
-	return c.tryListProfilesLegacy(ctx, accessToken)
+	return c.tryListProfilesLegacy(ctx, accessToken, region)
 }
 
-func (c *SSOOIDCClient) tryListAvailableProfiles(ctx context.Context, accessToken, clientID, refreshToken string) string {
-	req, err := http.NewRequestWithContext(ctx, http.MethodPost, GetKiroAPIEndpoint("")+"/ListAvailableProfiles", strings.NewReader("{}"))
+func (c *SSOOIDCClient) tryListAvailableProfiles(ctx context.Context, accessToken, clientID, refreshToken, region string) string {
+	req, err := http.NewRequestWithContext(ctx, http.MethodPost, GetKiroAPIEndpoint(region)+"/ListAvailableProfiles", strings.NewReader("{}"))
 	if err != nil {
 		return ""
 	}
@@ -1007,7 +1007,7 @@ func (c *SSOOIDCClient) tryListAvailableProfiles(ctx context.Context, accessToke
 	return ""
 }
 
-func (c *SSOOIDCClient) tryListProfilesLegacy(ctx context.Context, accessToken string) string {
+func (c *SSOOIDCClient) tryListProfilesLegacy(ctx context.Context, accessToken, region string) string {
 	payload := map[string]interface{}{
 		"origin": "AI_EDITOR",
 	}
@@ -1019,7 +1019,7 @@ func (c *SSOOIDCClient) tryListProfilesLegacy(ctx context.Context, accessToken s
 
 	// Use the legacy CodeWhisperer endpoint for JSON-RPC style requests.
 	// The Q endpoint (q.{region}.amazonaws.com) does NOT support x-amz-target headers.
-	req, err := http.NewRequestWithContext(ctx, http.MethodPost, GetCodeWhispererLegacyEndpoint(""), strings.NewReader(string(body)))
+	req, err := http.NewRequestWithContext(ctx, http.MethodPost, GetCodeWhispererLegacyEndpoint(region), strings.NewReader(string(body)))
 	if err != nil {
 		return ""
 	}
@@ -1565,7 +1565,7 @@ func (c *SSOOIDCClient) LoginWithIDCAuthCode(ctx context.Context, startURL, regi
 		fmt.Println("\n✓ Authentication successful!")
 
 		fmt.Println("Fetching profile information...")
-		profileArn := c.FetchProfileArn(ctx, tokenResp.AccessToken, regResp.ClientID, tokenResp.RefreshToken)
+		profileArn := c.FetchProfileArn(ctx, tokenResp.AccessToken, regResp.ClientID, tokenResp.RefreshToken, region)
 
 		email := FetchUserEmailWithFallback(ctx, c.cfg, tokenResp.AccessToken, regResp.ClientID, tokenResp.RefreshToken)
 		if email != "" {

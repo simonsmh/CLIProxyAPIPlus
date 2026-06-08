@@ -3816,9 +3816,10 @@ func (e *KiroExecutor) fetchAndSaveProfileArn(ctx context.Context, auth *cliprox
 
 	clientID, _ := auth.Metadata["client_id"].(string)
 	refreshToken, _ := auth.Metadata["refresh_token"].(string)
+	region, _ := auth.Metadata["region"].(string)
 
 	ssoClient := kiroauth.NewSSOOIDCClient(e.cfg)
-	profileArn := ssoClient.FetchProfileArn(ctx, accessToken, clientID, refreshToken)
+	profileArn := ssoClient.FetchProfileArn(ctx, accessToken, clientID, refreshToken, region)
 	if profileArn == "" {
 		log.Debugf("kiro executor: FetchProfileArn returned no profiles")
 		return ""
