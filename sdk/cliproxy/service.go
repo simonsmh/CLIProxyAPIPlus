@@ -2571,8 +2571,8 @@ func (s *Service) fetchKiroModels(a *coreauth.Auth) []*ModelInfo {
 
 	// Extract token data from auth attributes
 	tokenData := s.extractKiroTokenData(a)
-	if tokenData == nil || tokenData.AccessToken == "" {
-		log.Debug("kiro: no valid token data in auth, using static models")
+	if tokenData == nil || tokenData.AccessToken == "" || tokenData.ProfileArn == "" {
+		log.Debug("kiro: no valid token or profile ARN in auth, using static models")
 		return registry.GetKiroModels()
 	}
 

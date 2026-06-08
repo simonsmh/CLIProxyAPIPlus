@@ -230,6 +230,9 @@ func (k *KiroAuth) GetUsageLimits(ctx context.Context, tokenData *KiroTokenData)
 //   - []*KiroModel: The list of available models
 //   - error: An error if the request fails
 func (k *KiroAuth) ListAvailableModels(ctx context.Context, tokenData *KiroTokenData) ([]*KiroModel, error) {
+	if tokenData == nil || tokenData.ProfileArn == "" {
+		return nil, fmt.Errorf("profile ARN is empty")
+	}
 	queryParams := map[string]string{
 		"origin":     "AI_EDITOR",
 		"profileArn": tokenData.ProfileArn,
