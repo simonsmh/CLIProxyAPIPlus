@@ -869,7 +869,7 @@ func (c *SSOOIDCClient) LoginWithBuilderID(ctx context.Context) (*KiroTokenData,
 			return &KiroTokenData{
 				AccessToken:  tokenResp.AccessToken,
 				RefreshToken: tokenResp.RefreshToken,
-				ProfileArn:   "", // Builder ID has no profile
+				ProfileArn:   "arn:aws:codewhisperer:us-east-1:000000000000:profile/000000000000", // Default Builder ID profile
 				ExpiresAt:    expiresAt.Format(time.RFC3339),
 				AuthMethod:   "builder-id",
 				Provider:     "AWS",
@@ -1467,7 +1467,7 @@ func (c *SSOOIDCClient) LoginWithBuilderIDAuthCode(ctx context.Context) (*KiroTo
 		return &KiroTokenData{
 			AccessToken:  tokenResp.AccessToken,
 			RefreshToken: tokenResp.RefreshToken,
-			ProfileArn:   "", // Builder ID has no profile
+			ProfileArn:   "arn:aws:codewhisperer:us-east-1:000000000000:profile/000000000000", // Default Builder ID profile
 			ExpiresAt:    expiresAt.Format(time.RFC3339),
 			AuthMethod:   "builder-id",
 			Provider:     "AWS",
