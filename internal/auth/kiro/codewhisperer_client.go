@@ -99,7 +99,7 @@ func (c *CodeWhispererClient) GetUsageLimits(ctx context.Context, accessToken, c
 		return nil, fmt.Errorf("failed to read response: %w", err)
 	}
 
-	log.Debugf("codewhisperer: status=%d, body=%s", resp.StatusCode, string(body))
+	log.Debugf("codewhisperer: status=%d", resp.StatusCode)
 
 	if resp.StatusCode != http.StatusOK {
 		return nil, fmt.Errorf("API returned status %d: %s", resp.StatusCode, string(body))

@@ -265,7 +265,7 @@ func (c *SocialAuthClient) CreateToken(ctx context.Context, req *CreateTokenRequ
 	}
 
 	if resp.StatusCode != http.StatusOK {
-		log.Debugf("token exchange failed (status %d): %s", resp.StatusCode, string(respBody))
+		log.Debugf("token exchange failed (status %d)", resp.StatusCode)
 		return nil, fmt.Errorf("token exchange failed (status %d)", resp.StatusCode)
 	}
 
@@ -306,7 +306,7 @@ func (c *SocialAuthClient) RefreshSocialToken(ctx context.Context, refreshToken 
 	}
 
 	if resp.StatusCode != http.StatusOK {
-		log.Debugf("token refresh failed (status %d): %s", resp.StatusCode, string(respBody))
+		log.Debugf("token refresh failed (status %d)", resp.StatusCode)
 		return nil, fmt.Errorf("token refresh failed (status %d)", resp.StatusCode)
 	}
 

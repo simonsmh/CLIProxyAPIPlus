@@ -181,7 +181,7 @@ func (c *SSOOIDCClient) RegisterClientWithRegion(ctx context.Context, region str
 	}
 
 	if resp.StatusCode != http.StatusOK {
-		log.Debugf("register client failed (status %d): %s", resp.StatusCode, string(respBody))
+		log.Debugf("register client failed (status %d)", resp.StatusCode)
 		return nil, fmt.Errorf("register client failed (status %d)", resp.StatusCode)
 	}
 
@@ -226,7 +226,7 @@ func (c *SSOOIDCClient) StartDeviceAuthorizationWithIDC(ctx context.Context, cli
 	}
 
 	if resp.StatusCode != http.StatusOK {
-		log.Debugf("start device auth failed (status %d): %s", resp.StatusCode, string(respBody))
+		log.Debugf("start device auth failed (status %d)", resp.StatusCode)
 		return nil, fmt.Errorf("start device auth failed (status %d)", resp.StatusCode)
 	}
 
@@ -284,12 +284,12 @@ func (c *SSOOIDCClient) CreateTokenWithRegion(ctx context.Context, clientID, cli
 				return nil, ErrSlowDown
 			}
 		}
-		log.Debugf("create token failed: %s", string(respBody))
+		log.Debugf("create token failed")
 		return nil, fmt.Errorf("create token failed")
 	}
 
 	if resp.StatusCode != http.StatusOK {
-		log.Debugf("create token failed (status %d): %s", resp.StatusCode, string(respBody))
+		log.Debugf("create token failed (status %d)", resp.StatusCode)
 		return nil, fmt.Errorf("create token failed (status %d)", resp.StatusCode)
 	}
 
@@ -338,7 +338,7 @@ func (c *SSOOIDCClient) RefreshTokenWithRegion(ctx context.Context, clientID, cl
 	}
 
 	if resp.StatusCode != http.StatusOK {
-		log.Warnf("IDC token refresh failed (status %d): %s", resp.StatusCode, string(respBody))
+		log.Warnf("IDC token refresh failed (status %d)", resp.StatusCode)
 		return nil, fmt.Errorf("token refresh failed (status %d)", resp.StatusCode)
 	}
 
@@ -596,7 +596,7 @@ func (c *SSOOIDCClient) RegisterClient(ctx context.Context) (*RegisterClientResp
 	}
 
 	if resp.StatusCode != http.StatusOK {
-		log.Debugf("register client failed (status %d): %s", resp.StatusCode, string(respBody))
+		log.Debugf("register client failed (status %d)", resp.StatusCode)
 		return nil, fmt.Errorf("register client failed (status %d)", resp.StatusCode)
 	}
 
@@ -639,7 +639,7 @@ func (c *SSOOIDCClient) StartDeviceAuthorization(ctx context.Context, clientID, 
 	}
 
 	if resp.StatusCode != http.StatusOK {
-		log.Debugf("start device auth failed (status %d): %s", resp.StatusCode, string(respBody))
+		log.Debugf("start device auth failed (status %d)", resp.StatusCode)
 		return nil, fmt.Errorf("start device auth failed (status %d)", resp.StatusCode)
 	}
 
@@ -695,12 +695,12 @@ func (c *SSOOIDCClient) CreateToken(ctx context.Context, clientID, clientSecret,
 				return nil, ErrSlowDown
 			}
 		}
-		log.Debugf("create token failed: %s", string(respBody))
+		log.Debugf("create token failed")
 		return nil, fmt.Errorf("create token failed")
 	}
 
 	if resp.StatusCode != http.StatusOK {
-		log.Debugf("create token failed (status %d): %s", resp.StatusCode, string(respBody))
+		log.Debugf("create token failed (status %d)", resp.StatusCode)
 		return nil, fmt.Errorf("create token failed (status %d)", resp.StatusCode)
 	}
 
@@ -745,8 +745,8 @@ func (c *SSOOIDCClient) RefreshToken(ctx context.Context, clientID, clientSecret
 	}
 
 	if resp.StatusCode != http.StatusOK {
-		log.Warnf("token refresh failed (status %d): %s", resp.StatusCode, string(respBody))
-		return nil, fmt.Errorf("token refresh failed (status %d): %s", resp.StatusCode, string(respBody))
+		log.Warnf("token refresh failed (status %d)", resp.StatusCode)
+		return nil, fmt.Errorf("token refresh failed (status %d)", resp.StatusCode)
 	}
 
 	var result CreateTokenResponse
@@ -918,8 +918,8 @@ func (c *SSOOIDCClient) tryUserInfoEndpoint(ctx context.Context, accessToken str
 	defer resp.Body.Close()
 
 	if resp.StatusCode != http.StatusOK {
-		respBody, _ := io.ReadAll(resp.Body)
-		log.Debugf("userinfo endpoint returned status %d: %s", resp.StatusCode, string(respBody))
+		_, _ = io.ReadAll(resp.Body)
+		log.Debugf("userinfo endpoint returned status %d", resp.StatusCode)
 		return ""
 	}
 
@@ -928,7 +928,7 @@ func (c *SSOOIDCClient) tryUserInfoEndpoint(ctx context.Context, accessToken str
 		return ""
 	}
 
-	log.Debugf("userinfo response: %s", string(respBody))
+	log.Debugf("userinfo response received (status %d)", resp.StatusCode)
 
 	var userInfo struct {
 		Email             string `json:"email"`
@@ -980,11 +980,11 @@ func (c *SSOOIDCClient) tryListAvailableProfiles(ctx context.Context, accessToke
 	respBody, _ := io.ReadAll(resp.Body)
 
 	if resp.StatusCode != http.StatusOK {
-		log.Debugf("ListAvailableProfiles failed (status %d): %s", resp.StatusCode, string(respBody))
+		log.Debugf("ListAvailableProfiles failed (status %d)", resp.StatusCode)
 		return ""
 	}
 
-	log.Debugf("ListAvailableProfiles response: %s", string(respBody))
+	log.Debugf("ListAvailableProfiles response received")
 
 	var result struct {
 		Profiles []struct {
@@ -1038,11 +1038,11 @@ func (c *SSOOIDCClient) tryListProfilesLegacy(ctx context.Context, accessToken, 
 	respBody, _ := io.ReadAll(resp.Body)
 
 	if resp.StatusCode != http.StatusOK {
-		log.Debugf("ListProfiles (legacy) failed (status %d): %s", resp.StatusCode, string(respBody))
+		log.Debugf("ListProfiles (legacy) failed (status %d)", resp.StatusCode)
 		return ""
 	}
 
-	log.Debugf("ListProfiles (legacy) response: %s", string(respBody))
+	log.Debugf("ListProfiles (legacy) response received")
 
 	var result struct {
 		Profiles []struct {
@@ -1100,7 +1100,7 @@ func (c *SSOOIDCClient) RegisterClientForAuthCode(ctx context.Context, redirectU
 	}
 
 	if resp.StatusCode != http.StatusOK {
-		log.Debugf("register client for auth code failed (status %d): %s", resp.StatusCode, string(respBody))
+		log.Debugf("register client for auth code failed (status %d)", resp.StatusCode)
 		return nil, fmt.Errorf("register client failed (status %d)", resp.StatusCode)
 	}
 
@@ -1147,7 +1147,7 @@ func (c *SSOOIDCClient) RegisterClientForAuthCodeWithIDC(ctx context.Context, re
 	}
 
 	if resp.StatusCode != http.StatusOK {
-		log.Debugf("register client for auth code with IDC failed (status %d): %s", resp.StatusCode, string(respBody))
+		log.Debugf("register client for auth code with IDC failed (status %d)", resp.StatusCode)
 		return nil, fmt.Errorf("register client failed (status %d)", resp.StatusCode)
 	}
 
@@ -1299,7 +1299,7 @@ func (c *SSOOIDCClient) CreateTokenWithAuthCode(ctx context.Context, clientID, c
 	}
 
 	if resp.StatusCode != http.StatusOK {
-		log.Debugf("create token with auth code failed (status %d): %s", resp.StatusCode, string(respBody))
+		log.Debugf("create token with auth code failed (status %d)", resp.StatusCode)
 		return nil, fmt.Errorf("create token failed (status %d)", resp.StatusCode)
 	}
 
@@ -1346,7 +1346,7 @@ func (c *SSOOIDCClient) CreateTokenWithAuthCodeAndRegion(ctx context.Context, cl
 	}
 
 	if resp.StatusCode != http.StatusOK {
-		log.Debugf("create token with auth code failed (status %d): %s", resp.StatusCode, string(respBody))
+		log.Debugf("create token with auth code failed (status %d)", resp.StatusCode)
 		return nil, fmt.Errorf("create token failed (status %d)", resp.StatusCode)
 	}
 

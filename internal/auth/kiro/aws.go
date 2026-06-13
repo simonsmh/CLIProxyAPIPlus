@@ -206,7 +206,7 @@ func LoadKiroIDEToken() (*KiroTokenData, error) {
 	if token.ClientIDHash != "" && token.ClientID == "" {
 		if err := loadDeviceRegistration(homeDir, token.ClientIDHash, &token); err != nil {
 			// Log warning but don't fail - token might still work for some operations
-			fmt.Printf("warning: failed to load device registration for clientIdHash %s: %v\n", token.ClientIDHash, err)
+			log.Warnf("failed to load device registration for clientIdHash %s: %v", token.ClientIDHash, err)
 		}
 	}
 
@@ -288,7 +288,7 @@ func LoadKiroTokenFromPath(tokenPath string) (*KiroTokenData, error) {
 	if token.ClientIDHash != "" && token.ClientID == "" {
 		if err := loadDeviceRegistration(homeDir, token.ClientIDHash, &token); err != nil {
 			// Log warning but don't fail - token might still work for some operations
-			fmt.Printf("warning: failed to load device registration for clientIdHash %s: %v\n", token.ClientIDHash, err)
+			log.Warnf("failed to load device registration for clientIdHash %s: %v", token.ClientIDHash, err)
 		}
 	}
 

@@ -901,7 +901,7 @@ func (e *KiroExecutor) executeWithRetry(ctx context.Context, auth *cliproxyauth.
 				_ = httpResp.Body.Close()
 				appendAPIResponseChunk(ctx, e.cfg, respBody)
 
-				log.Warnf("kiro: received 402 (monthly limit). Upstream body: %s", string(respBody))
+				log.Warnf("kiro: received 402 (monthly limit). Upstream body: %s", summarizeErrorBody(httpResp.Header.Get("Content-Type"), respBody))
 
 				// Return upstream error body directly
 				return resp, statusErr{code: httpResp.StatusCode, msg: string(respBody)}
@@ -1332,7 +1332,7 @@ func (e *KiroExecutor) executeStreamWithRetry(ctx context.Context, auth *cliprox
 					log.Infof("kiro: token refreshed successfully, no retries remaining")
 				}
 
-				log.Warnf("kiro stream error, status: 401, body: %s", string(respBody))
+				log.Warnf("kiro stream error, status: 401, body: %s", summarizeErrorBody(httpResp.Header.Get("Content-Type"), respBody))
 				return nil, statusErr{code: httpResp.StatusCode, msg: string(respBody)}
 			}
 
@@ -1342,7 +1342,7 @@ func (e *KiroExecutor) executeStreamWithRetry(ctx context.Context, auth *cliprox
 				_ = httpResp.Body.Close()
 				appendAPIResponseChunk(ctx, e.cfg, respBody)
 
-				log.Warnf("kiro: stream received 402 (monthly limit). Upstream body: %s", string(respBody))
+				log.Warnf("kiro: stream received 402 (monthly limit). Upstream body: %s", summarizeErrorBody(httpResp.Header.Get("Content-Type"), respBody))
 
 				// Return upstream error body directly
 				return nil, statusErr{code: httpResp.StatusCode, msg: string(respBody)}
@@ -1356,7 +1356,7 @@ func (e *KiroExecutor) executeStreamWithRetry(ctx context.Context, auth *cliprox
 				appendAPIResponseChunk(ctx, e.cfg, respBody)
 
 				// Log the 403 error details for debugging
-				log.Warnf("kiro: stream received 403 error (attempt %d/%d), body: %s", attempt+1, maxRetries+1, string(respBody))
+				log.Warnf("kiro: stream received 403 error (attempt %d/%d), body: %s", attempt+1, maxRetries+1, summarizeErrorBody(httpResp.Header.Get("Content-Type"), respBody))
 
 				respBodyStr := string(respBody)
 
@@ -1406,7 +1406,7 @@ func (e *KiroExecutor) executeStreamWithRetry(ctx context.Context, auth *cliprox
 			if httpResp.StatusCode < 200 || httpResp.StatusCode >= 300 {
 				b, _ := io.ReadAll(httpResp.Body)
 				appendAPIResponseChunk(ctx, e.cfg, b)
-				log.Debugf("kiro stream error, status: %d, body: %s", httpResp.StatusCode, string(b))
+				log.Debugf("kiro stream error, status: %d, body: %s", httpResp.StatusCode, summarizeErrorBody(httpResp.Header.Get("Content-Type"), b))
 				if errClose := httpResp.Body.Close(); errClose != nil {
 					log.Errorf("response body close error: %v", errClose)
 				}
@@ -2569,7 +2569,7 @@ func (e *KiroExecutor) streamToChannel(ctx context.Context, body io.Reader, out 
 
 		var event map[string]interface{}
 		if err := json.Unmarshal(payload, &event); err != nil {
-			log.Warnf("kiro: failed to unmarshal event payload: %v, raw: %s", err, string(payload))
+			log.Warnf("kiro: failed to unmarshal event payload: %v", err)
 			continue
 		}
 
