@@ -472,6 +472,20 @@ func (c *SocialAuthClient) LoginWithSocial(ctx context.Context, provider SocialP
 	}
 }
 
+// LoginWithSocialSelection prompts the user to choose between Google and GitHub.
+func (c *SocialAuthClient) LoginWithSocialSelection(ctx context.Context) (*KiroTokenData, error) {
+	options := []string{
+		"Login with Google",
+		"Login with GitHub",
+	}
+	selection := promptSelect("\n? Select login method:", options)
+
+	if selection == 1 {
+		return c.LoginWithSocial(ctx, ProviderGitHub)
+	}
+	return c.LoginWithSocial(ctx, ProviderGoogle)
+}
+
 // LoginWithGoogle performs OAuth login with Google.
 func (c *SocialAuthClient) LoginWithGoogle(ctx context.Context) (*KiroTokenData, error) {
 	return c.LoginWithSocial(ctx, ProviderGoogle)

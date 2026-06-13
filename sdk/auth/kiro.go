@@ -253,6 +253,20 @@ func (a *KiroAuthenticator) LoginWithAuthCode(ctx context.Context, cfg *config.C
 	return record, nil
 }
 
+// LoginWithSocialSelection prompts the user to choose between Google and GitHub social login.
+func (a *KiroAuthenticator) LoginWithSocialSelection(ctx context.Context, cfg *config.Config, opts *LoginOptions) (*coreauth.Auth, error) {
+	if cfg == nil {
+		return nil, fmt.Errorf("kiro auth: configuration is required")
+	}
+
+	client := kiroauth.NewSocialAuthClient(cfg)
+	tokenData, err := client.LoginWithSocialSelection(ctx)
+	if err != nil {
+		return nil, err
+	}
+	return a.createAuthRecord(tokenData, "social")
+}
+
 // LoginWithGoogle performs OAuth login for Kiro with Google.
 func (a *KiroAuthenticator) LoginWithGoogle(ctx context.Context, cfg *config.Config, opts *LoginOptions) (*coreauth.Auth, error) {
 	if cfg == nil {
