@@ -616,16 +616,6 @@ func (c *SocialAuthClient) LoginWithSocialSelection(ctx context.Context) (*KiroT
 	return c.LoginWithSocial(ctx, "")
 }
 
-// LoginWithGoogle performs OAuth login with Google.
-func (c *SocialAuthClient) LoginWithGoogle(ctx context.Context) (*KiroTokenData, error) {
-	return c.LoginWithSocial(ctx, ProviderGoogle)
-}
-
-// LoginWithGitHub performs OAuth login with GitHub.
-func (c *SocialAuthClient) LoginWithGitHub(ctx context.Context) (*KiroTokenData, error) {
-	return c.LoginWithSocial(ctx, ProviderGitHub)
-}
-
 // forceDefaultProtocolHandler sets our protocol handler as the default for kiro:// URLs.
 // This prevents the "Open with" dialog from appearing on Linux.
 // On non-Linux platforms, this is a no-op as they use different mechanisms.

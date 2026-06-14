@@ -296,17 +296,3 @@ func (o *KiroOAuth) RefreshTokenWithFingerprint(ctx context.Context, refreshToke
 		Region:       "us-east-1",
 	}, nil
 }
-
-// LoginWithGoogle performs OAuth login with Google using Kiro's social auth.
-// This uses a custom protocol handler (kiro://) to receive the callback.
-func (o *KiroOAuth) LoginWithGoogle(ctx context.Context) (*KiroTokenData, error) {
-	socialClient := NewSocialAuthClient(o.cfg)
-	return socialClient.LoginWithGoogle(ctx)
-}
-
-// LoginWithGitHub performs OAuth login with GitHub using Kiro's social auth.
-// This uses a custom protocol handler (kiro://) to receive the callback.
-func (o *KiroOAuth) LoginWithGitHub(ctx context.Context) (*KiroTokenData, error) {
-	socialClient := NewSocialAuthClient(o.cfg)
-	return socialClient.LoginWithGitHub(ctx)
-}

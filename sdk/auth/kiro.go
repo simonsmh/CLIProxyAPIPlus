@@ -281,32 +281,6 @@ func (a *KiroAuthenticator) LoginWithSocialSelection(ctx context.Context, cfg *c
 	return a.createAuthRecord(tokenData, "social")
 }
 
-// LoginWithGoogle performs OAuth login for Kiro with Google.
-func (a *KiroAuthenticator) LoginWithGoogle(ctx context.Context, cfg *config.Config, opts *LoginOptions) (*coreauth.Auth, error) {
-	if cfg == nil {
-		return nil, fmt.Errorf("kiro auth: configuration is required")
-	}
-	client := kiroauth.NewSocialAuthClient(cfg)
-	tokenData, err := client.LoginWithGoogle(ctx)
-	if err != nil {
-		return nil, err
-	}
-	return a.createAuthRecord(tokenData, "social")
-}
-
-// LoginWithGitHub performs OAuth login for Kiro with GitHub.
-func (a *KiroAuthenticator) LoginWithGitHub(ctx context.Context, cfg *config.Config, opts *LoginOptions) (*coreauth.Auth, error) {
-	if cfg == nil {
-		return nil, fmt.Errorf("kiro auth: configuration is required")
-	}
-	client := kiroauth.NewSocialAuthClient(cfg)
-	tokenData, err := client.LoginWithGitHub(ctx)
-	if err != nil {
-		return nil, err
-	}
-	return a.createAuthRecord(tokenData, "social")
-}
-
 // ImportFromKiroIDE imports token from Kiro IDE's token file.
 func (a *KiroAuthenticator) ImportFromKiroIDE(ctx context.Context, cfg *config.Config) (*coreauth.Auth, error) {
 	tokenData, err := kiroauth.LoadKiroIDEToken()

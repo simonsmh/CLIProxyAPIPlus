@@ -52,7 +52,7 @@ type UsageBreakdown struct {
 }
 
 // NewCodeWhispererClient creates a new CodeWhisperer client.
-func NewCodeWhispererClient(cfg *config.Config, machineID string) *CodeWhispererClient {
+func NewCodeWhispererClient(cfg *config.Config) *CodeWhispererClient {
 	client := &http.Client{Timeout: 30 * time.Second}
 	if cfg != nil {
 		client = util.SetProxy(&cfg.SDKConfig, client)
@@ -141,7 +141,7 @@ func FetchUserEmailWithFallback(ctx context.Context, cfg *config.Config, accessT
 // For social tokens that have a profileArn, passing it enables correct endpoint routing.
 // Priority: 1. CodeWhisperer API (with profileArn + isEmailRequired)  2. CodeWhisperer API (isEmailRequired only)  3. userinfo endpoint  4. JWT parsing
 func cwFetchEmail(ctx context.Context, cfg *config.Config, accessToken, clientID, refreshToken, profileArn string) string {
-	cwClient := NewCodeWhispererClient(cfg, "")
+	cwClient := NewCodeWhispererClient(cfg)
 
 	// Method 1: Try CodeWhisperer API with profileArn AND isEmailRequired
 	if profileArn != "" {
