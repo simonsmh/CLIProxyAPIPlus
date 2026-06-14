@@ -4443,6 +4443,87 @@ func (h *Handler) RequestKiroToken(c *gin.Context) {
 	}
 }
 
+// GetKiroUsage returns the usage quota for a Kiro auth file.
+func (h *Handler) GetKiroUsage(c *gin.Context) {
+	name := strings.TrimSpace(c.Query("name"))
+	if name == "" {
+		c.JSON(http.StatusBadRequest, gin.H{"error": "name is required"})
+		return
+	}
+
+	if h.authManager == nil {
+		c.JSON(http.StatusServiceUnavailable, gin.H{"error": "auth manager unavailable"})
+		return
+	}
+
+	// Find auth record by name or ID
+	var targetAuth *coreauth.Auth
+	if auth, ok := h.authManager.GetByID(name); ok {
+		targetAuth = auth
+	} else {
+		for _, auth := range h.authManager.List() {
+			if auth.FileName == name || auth.ID == name {
+				targetAuth = auth
+				break
+			}
+		}
+	}
+
+	if targetAuth == nil {
+		c.JSON(http.StatusNotFound, gin.H{"error": "auth file not found"})
+		return
+	}
+
+	if targetAuth.Provider != "kiro" {
+		c.JSON(http.StatusBadRequest, gin.H{"error": "not a kiro auth file"})
+		return
+	}
+
+	// Extract token data from metadata
+	md := targetAuth.Metadata
+	if md == nil {
+		c.JSON(http.StatusBadRequest, gin.H{"error": "auth metadata is empty"})
+		return
+	}
+
+	accessToken, _ := md["access_token"].(string)
+	refreshToken, _ := md["refresh_token"].(string)
+	profileArn, _ := md["profile_arn"].(string)
+	clientID, _ := md["client_id"].(string)
+
+	if accessToken == "" {
+		c.JSON(http.StatusBadRequest, gin.H{"error": "access token not found in auth file"})
+		return
+	}
+
+	// If profileArn is empty, use default Builder ID profile ARN
+	if profileArn == "" {
+		profileArn = kiroauth.DefaultBuilderIDProfileArn
+	}
+
+	tokenData := &kiroauth.KiroTokenData{
+		AccessToken:  accessToken,
+		RefreshToken: refreshToken,
+		ProfileArn:   profileArn,
+		ClientID:     clientID,
+	}
+
+	checker := kiroauth.NewUsageChecker(h.cfg)
+	usage, err := checker.CheckUsage(c.Request.Context(), tokenData)
+	if err != nil {
+		log.WithError(err).Error("failed to check kiro usage")
+		c.JSON(http.StatusInternalServerError, gin.H{"error": fmt.Sprintf("failed to check usage: %v", err)})
+		return
+	}
+
+	c.JSON(http.StatusOK, gin.H{
+		"usage":              usage,
+		"remaining_quota":    kiroauth.GetRemainingQuota(usage),
+		"is_quota_exhausted": kiroauth.IsQuotaExhausted(usage),
+		"usage_percentage":   kiroauth.GetUsagePercentage(usage),
+	})
+}
+
 func (h *Handler) RequestKiloToken(c *gin.Context) {
 	ctx := context.Background()
 
