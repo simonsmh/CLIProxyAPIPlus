@@ -177,14 +177,10 @@ func initGlobalFingerprintConfig(cfg *config.Config) {
 	}
 	fpCfg := cfg.KiroFingerprint
 	SetGlobalFingerprintConfig(&FingerprintConfig{
-		OIDCSDKVersion:      fpCfg.OIDCSDKVersion,
 		RuntimeSDKVersion:   fpCfg.RuntimeSDKVersion,
 		StreamingSDKVersion: fpCfg.StreamingSDKVersion,
 		OSType:              fpCfg.OSType,
-		OSVersion:           fpCfg.OSVersion,
-		NodeVersion:         fpCfg.NodeVersion,
 		KiroVersion:         fpCfg.KiroVersion,
-		KiroHash:            fpCfg.KiroHash,
 	})
 	log.Debug("kiro: global fingerprint config loaded")
 }

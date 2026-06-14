@@ -43,7 +43,6 @@ type KiroTokenResponse struct {
 type KiroOAuth struct {
 	httpClient  *http.Client
 	cfg         *config.Config
-	machineID   string
 	kiroVersion string
 }
 
@@ -57,7 +56,6 @@ func NewKiroOAuth(cfg *config.Config) *KiroOAuth {
 	return &KiroOAuth{
 		httpClient:  client,
 		cfg:         cfg,
-		machineID:   fp.KiroHash,
 		kiroVersion: fp.KiroVersion,
 	}
 }
@@ -195,7 +193,7 @@ func (o *KiroOAuth) exchangeCodeForToken(ctx context.Context, code, codeVerifier
 	}
 
 	req.Header.Set("Content-Type", "application/json")
-	req.Header.Set("User-Agent", fmt.Sprintf("KiroIDE-%s-%s", o.kiroVersion, o.machineID))
+	req.Header.Set("User-Agent", fmt.Sprintf("appVersion-%s", o.kiroVersion))
 	req.Header.Set("Accept", "application/json, text/plain, */*")
 
 	resp, err := o.httpClient.Do(req)
@@ -262,7 +260,7 @@ func (o *KiroOAuth) RefreshTokenWithFingerprint(ctx context.Context, refreshToke
 	}
 
 	req.Header.Set("Content-Type", "application/json")
-	req.Header.Set("User-Agent", fmt.Sprintf("KiroIDE-%s-%s", o.kiroVersion, o.machineID))
+	req.Header.Set("User-Agent", fmt.Sprintf("appVersion-%s", o.kiroVersion))
 	req.Header.Set("Accept", "application/json, text/plain, */*")
 
 	resp, err := o.httpClient.Do(req)

@@ -64,7 +64,6 @@ func TestInitFingerprintConfig(t *testing.T) {
 		KiroFingerprint: &config.KiroFingerprintConfig{
 			RuntimeSDKVersion: "3.0.0",
 			KiroVersion:       "1.0.0",
-			KiroHash:          "abc123",
 		},
 	})
 	// Verify fingerprint manager was initialized

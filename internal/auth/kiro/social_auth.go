@@ -88,7 +88,6 @@ type SocialAuthClient struct {
 	httpClient      *http.Client
 	cfg             *config.Config
 	protocolHandler *ProtocolHandler
-	machineID       string
 	kiroVersion     string
 }
 
@@ -103,7 +102,6 @@ func NewSocialAuthClient(cfg *config.Config) *SocialAuthClient {
 		httpClient:      client,
 		cfg:             cfg,
 		protocolHandler: NewProtocolHandler(),
-		machineID:       fp.KiroHash,
 		kiroVersion:     fp.KiroVersion,
 	}
 }
@@ -380,7 +378,7 @@ func (c *SocialAuthClient) CreateToken(ctx context.Context, req *CreateTokenRequ
 	}
 
 	httpReq.Header.Set("Content-Type", "application/json")
-	httpReq.Header.Set("User-Agent", fmt.Sprintf("KiroIDE-%s-%s", c.kiroVersion, c.machineID))
+	httpReq.Header.Set("User-Agent", fmt.Sprintf("appVersion-%s", c.kiroVersion))
 	httpReq.Header.Set("Accept", "application/json, text/plain, */*")
 
 	resp, err := c.httpClient.Do(httpReq)
@@ -421,7 +419,7 @@ func (c *SocialAuthClient) RefreshSocialToken(ctx context.Context, refreshToken 
 	}
 
 	httpReq.Header.Set("Content-Type", "application/json")
-	httpReq.Header.Set("User-Agent", fmt.Sprintf("KiroIDE-%s-%s", c.kiroVersion, c.machineID))
+	httpReq.Header.Set("User-Agent", fmt.Sprintf("appVersion-%s", c.kiroVersion))
 	httpReq.Header.Set("Accept", "application/json, text/plain, */*")
 
 	resp, err := c.httpClient.Do(httpReq)

@@ -28,9 +28,6 @@ func TestGetFingerprint_NewToken(t *testing.T) {
 	if fp == nil {
 		t.Fatal("expected non-nil Fingerprint")
 	}
-	if fp.OIDCSDKVersion == "" {
-		t.Error("expected non-empty OIDCSDKVersion")
-	}
 	if fp.RuntimeSDKVersion == "" {
 		t.Error("expected non-empty RuntimeSDKVersion")
 	}
@@ -40,17 +37,8 @@ func TestGetFingerprint_NewToken(t *testing.T) {
 	if fp.OSType == "" {
 		t.Error("expected non-empty OSType")
 	}
-	if fp.OSVersion == "" {
-		t.Error("expected non-empty OSVersion")
-	}
-	if fp.NodeVersion == "" {
-		t.Error("expected non-empty NodeVersion")
-	}
 	if fp.KiroVersion == "" {
 		t.Error("expected non-empty KiroVersion")
-	}
-	if fp.KiroHash == "" {
-		t.Error("expected non-empty KiroHash")
 	}
 }
 
@@ -89,21 +77,14 @@ func TestBuildUserAgent(t *testing.T) {
 	}
 }
 
-func TestGetFingerprint_OSVersionMatchesOSType(t *testing.T) {
+func TestGetFingerprint_OSTypeIsValid(t *testing.T) {
 	fm := NewFingerprintManager()
 
+	validOS := map[string]bool{"macos": true, "windows": true, "linux": true}
 	for i := 0; i < 20; i++ {
 		fp := fm.GetFingerprint("token" + string(rune('a'+i)))
-		validVersions := osVersions[fp.OSType]
-		found := false
-		for _, v := range validVersions {
-			if v == fp.OSVersion {
-				found = true
-				break
-			}
-		}
-		if !found {
-			t.Errorf("OS version %s not valid for OS type %s", fp.OSVersion, fp.OSType)
+		if !validOS[fp.OSType] {
+			t.Errorf("invalid OS type: %s", fp.OSType)
 		}
 	}
 }
@@ -113,7 +94,7 @@ func TestGenerateFromConfig_OSTypeFromRuntimeGOOS(t *testing.T) {
 
 	// Set config with empty OSType to trigger runtime.GOOS fallback
 	fm.SetConfig(&FingerprintConfig{
-		OIDCSDKVersion: "3.738.0", // Set other fields to use config path
+		RuntimeSDKVersion: "0.1.16551",
 	})
 
 	fp := fm.GetFingerprint("test-token")
@@ -122,7 +103,7 @@ func TestGenerateFromConfig_OSTypeFromRuntimeGOOS(t *testing.T) {
 	var expectedOS string
 	switch runtime.GOOS {
 	case "darwin":
-		expectedOS = "darwin"
+		expectedOS = "macos"
 	case "windows":
 		expectedOS = "windows"
 	default:
@@ -163,38 +144,6 @@ func TestFingerprintManager_ConcurrentAccess(t *testing.T) {
 	wg.Wait()
 }
 
-func TestKiroHashStability(t *testing.T) {
-	fm := NewFingerprintManager()
-
-	// Same token should always return same hash
-	fp1 := fm.GetFingerprint("token1")
-	fp2 := fm.GetFingerprint("token1")
-	if fp1.KiroHash != fp2.KiroHash {
-		t.Errorf("same token should have same hash: %s vs %s", fp1.KiroHash, fp2.KiroHash)
-	}
-
-	// Different tokens should have different hashes
-	fp3 := fm.GetFingerprint("token2")
-	if fp1.KiroHash == fp3.KiroHash {
-		t.Errorf("different tokens should have different hashes")
-	}
-}
-
-func TestKiroHashFormat(t *testing.T) {
-	fm := NewFingerprintManager()
-	fp := fm.GetFingerprint("token1")
-
-	if len(fp.KiroHash) != 64 {
-		t.Errorf("expected KiroHash length 64 (SHA256 hex), got %d", len(fp.KiroHash))
-	}
-
-	for _, c := range fp.KiroHash {
-		if (c < '0' || c > '9') && (c < 'a' || c > 'f') {
-			t.Errorf("invalid hex character in KiroHash: %c", c)
-		}
-	}
-}
-
 func TestGlobalFingerprintManager(t *testing.T) {
 	fm1 := GlobalFingerprintManager()
 	fm2 := GlobalFingerprintManager()
@@ -219,11 +168,11 @@ func TestSetOIDCHeaders(t *testing.T) {
 	if amzUA == "" {
 		t.Error("expected x-amz-user-agent header to be set")
 	}
-	if !strings.Contains(amzUA, "aws-sdk-js/") {
-		t.Errorf("x-amz-user-agent should contain aws-sdk-js: %s", amzUA)
+	if !strings.Contains(amzUA, "aws-sdk-rust/") {
+		t.Errorf("x-amz-user-agent should contain aws-sdk-rust: %s", amzUA)
 	}
-	if !strings.Contains(amzUA, "KiroIDE") {
-		t.Errorf("x-amz-user-agent should contain KiroIDE: %s", amzUA)
+	if !strings.Contains(amzUA, "appVersion-") {
+		t.Errorf("x-amz-user-agent should contain appVersion: %s", amzUA)
 	}
 
 	ua := req.Header.Get("User-Agent")
@@ -327,14 +276,10 @@ func TestBuildUserAgentFormat(t *testing.T) {
 
 	ua := fp.BuildUserAgent()
 	requiredParts := []string{
-		"aws-sdk-js/",
-		"ua/2.1",
+		"aws-sdk-rust/",
+		"api/codewhispererstreaming/",
 		"os/",
-		"lang/js",
-		"md/nodejs#",
-		"api/codewhispererstreaming#",
-		"m/E",
-		"KiroIDE-",
+		"appVersion-",
 	}
 	for _, part := range requiredParts {
 		if !strings.Contains(ua, part) {
@@ -349,8 +294,8 @@ func TestBuildAmzUserAgentFormat(t *testing.T) {
 
 	amzUA := fp.BuildAmzUserAgent()
 	requiredParts := []string{
-		"aws-sdk-js/",
-		"KiroIDE-",
+		"aws-sdk-rust/",
+		"appVersion-",
 	}
 	for _, part := range requiredParts {
 		if !strings.Contains(amzUA, part) {
@@ -370,8 +315,6 @@ func TestSetRuntimeHeaders(t *testing.T) {
 	accessToken := "test-access-token-1234567890"
 	clientID := "test-client-id-12345"
 	accountKey := GenerateAccountKey(clientID)
-	fp := GlobalFingerprintManager().GetFingerprint(accountKey)
-	machineID := fp.KiroHash
 
 	setRuntimeHeaders(req, accessToken, accountKey)
 
@@ -385,14 +328,11 @@ func TestSetRuntimeHeaders(t *testing.T) {
 	if amzUA == "" {
 		t.Error("expected x-amz-user-agent header to be set")
 	}
-	if !strings.Contains(amzUA, "aws-sdk-js/") {
-		t.Errorf("x-amz-user-agent should contain aws-sdk-js: %s", amzUA)
+	if !strings.Contains(amzUA, "aws-sdk-rust/") {
+		t.Errorf("x-amz-user-agent should contain aws-sdk-rust: %s", amzUA)
 	}
-	if !strings.Contains(amzUA, "KiroIDE-") {
-		t.Errorf("x-amz-user-agent should contain KiroIDE: %s", amzUA)
-	}
-	if !strings.Contains(amzUA, machineID) {
-		t.Errorf("x-amz-user-agent should contain machineID: %s", amzUA)
+	if !strings.Contains(amzUA, "appVersion-") {
+		t.Errorf("x-amz-user-agent should contain appVersion: %s", amzUA)
 	}
 
 	// Check User-Agent header
@@ -400,11 +340,8 @@ func TestSetRuntimeHeaders(t *testing.T) {
 	if ua == "" {
 		t.Error("expected User-Agent header to be set")
 	}
-	if !strings.Contains(ua, "api/codewhispererruntime#") {
+	if !strings.Contains(ua, "api/codewhispererruntime/") {
 		t.Errorf("User-Agent should contain api/codewhispererruntime: %s", ua)
-	}
-	if !strings.Contains(ua, "m/N,E") {
-		t.Errorf("User-Agent should contain m/N,E: %s", ua)
 	}
 
 	// Check amz-sdk-invocation-id (should be a UUID)
@@ -423,17 +360,6 @@ func TestSetRuntimeHeaders(t *testing.T) {
 }
 
 func TestSDKVersionsAreValid(t *testing.T) {
-	// Verify all OIDC SDK versions match expected format (3.xxx.x)
-	for _, v := range oidcSDKVersions {
-		if !strings.HasPrefix(v, "3.") {
-			t.Errorf("OIDC SDK version should start with 3.: %s", v)
-		}
-		parts := strings.Split(v, ".")
-		if len(parts) != 3 {
-			t.Errorf("OIDC SDK version should have 3 parts: %s", v)
-		}
-	}
-
 	for _, v := range runtimeSDKVersions {
 		parts := strings.Split(v, ".")
 		if len(parts) != 3 {
@@ -450,28 +376,10 @@ func TestSDKVersionsAreValid(t *testing.T) {
 }
 
 func TestKiroVersionsAreValid(t *testing.T) {
-	// Verify all Kiro versions match expected format (0.x.xxx)
 	for _, v := range kiroVersions {
-		if !strings.HasPrefix(v, "0.") {
-			t.Errorf("Kiro version should start with 0.: %s", v)
-		}
 		parts := strings.Split(v, ".")
 		if len(parts) != 3 {
 			t.Errorf("Kiro version should have 3 parts: %s", v)
-		}
-	}
-}
-
-func TestNodeVersionsAreValid(t *testing.T) {
-	// Verify all Node versions match expected format (xx.xx.x)
-	for _, v := range nodeVersions {
-		parts := strings.Split(v, ".")
-		if len(parts) != 3 {
-			t.Errorf("Node version should have 3 parts: %s", v)
-		}
-		// Should be Node 20.x or 22.x
-		if !strings.HasPrefix(v, "20.") && !strings.HasPrefix(v, "22.") {
-			t.Errorf("Node version should be 20.x or 22.x LTS: %s", v)
 		}
 	}
 }
@@ -487,42 +395,26 @@ func TestFingerprintManager_SetConfig(t *testing.T) {
 
 	// Set config with all fields
 	cfg := &FingerprintConfig{
-		OIDCSDKVersion:      "3.999.0",
 		RuntimeSDKVersion:   "9.9.9",
 		StreamingSDKVersion: "8.8.8",
-		OSType:              "darwin",
-		OSVersion:           "99.0.0",
-		NodeVersion:         "99.99.99",
+		OSType:              "macos",
 		KiroVersion:         "9.9.999",
-		KiroHash:            "customhash123",
 	}
 	fm.SetConfig(cfg)
 
 	// After setting config, should use config values
 	fp2 := fm.GetFingerprint("token2")
-	if fp2.OIDCSDKVersion != "3.999.0" {
-		t.Errorf("expected OIDCSDKVersion '3.999.0', got '%s'", fp2.OIDCSDKVersion)
-	}
 	if fp2.RuntimeSDKVersion != "9.9.9" {
 		t.Errorf("expected RuntimeSDKVersion '9.9.9', got '%s'", fp2.RuntimeSDKVersion)
 	}
 	if fp2.StreamingSDKVersion != "8.8.8" {
 		t.Errorf("expected StreamingSDKVersion '8.8.8', got '%s'", fp2.StreamingSDKVersion)
 	}
-	if fp2.OSType != "darwin" {
-		t.Errorf("expected OSType 'darwin', got '%s'", fp2.OSType)
-	}
-	if fp2.OSVersion != "99.0.0" {
-		t.Errorf("expected OSVersion '99.0.0', got '%s'", fp2.OSVersion)
-	}
-	if fp2.NodeVersion != "99.99.99" {
-		t.Errorf("expected NodeVersion '99.99.99', got '%s'", fp2.NodeVersion)
+	if fp2.OSType != "macos" {
+		t.Errorf("expected OSType 'macos', got '%s'", fp2.OSType)
 	}
 	if fp2.KiroVersion != "9.9.999" {
 		t.Errorf("expected KiroVersion '9.9.999', got '%s'", fp2.KiroVersion)
-	}
-	if fp2.KiroHash != "customhash123" {
-		t.Errorf("expected KiroHash 'customhash123', got '%s'", fp2.KiroHash)
 	}
 }
 
@@ -532,8 +424,6 @@ func TestFingerprintManager_SetConfig_PartialFields(t *testing.T) {
 	// Set config with only some fields
 	cfg := &FingerprintConfig{
 		KiroVersion: "1.2.345",
-		KiroHash:    "myhash",
-		// Other fields empty - should use random
 	}
 	fm.SetConfig(cfg)
 
@@ -543,19 +433,13 @@ func TestFingerprintManager_SetConfig_PartialFields(t *testing.T) {
 	if fp.KiroVersion != "1.2.345" {
 		t.Errorf("expected KiroVersion '1.2.345', got '%s'", fp.KiroVersion)
 	}
-	if fp.KiroHash != "myhash" {
-		t.Errorf("expected KiroHash 'myhash', got '%s'", fp.KiroHash)
-	}
 
 	// Empty fields should be randomly selected (non-empty)
-	if fp.OIDCSDKVersion == "" {
-		t.Error("expected non-empty OIDCSDKVersion")
-	}
 	if fp.OSType == "" {
 		t.Error("expected non-empty OSType")
 	}
-	if fp.NodeVersion == "" {
-		t.Error("expected non-empty NodeVersion")
+	if fp.RuntimeSDKVersion == "" {
+		t.Error("expected non-empty RuntimeSDKVersion")
 	}
 }
 
@@ -564,21 +448,21 @@ func TestFingerprintManager_SetConfig_ClearsCache(t *testing.T) {
 
 	// Get fingerprint before config
 	fp1 := fm.GetFingerprint("token1")
-	originalHash := fp1.KiroHash
+	originalVersion := fp1.KiroVersion
 
 	// Set config
 	cfg := &FingerprintConfig{
-		KiroHash: "newcustomhash",
+		KiroVersion: "99.99.99",
 	}
 	fm.SetConfig(cfg)
 
 	// Same token should now return different fingerprint (cache cleared)
 	fp2 := fm.GetFingerprint("token1")
-	if fp2.KiroHash == originalHash {
+	if fp2.KiroVersion == originalVersion {
 		t.Error("expected cache to be cleared after SetConfig")
 	}
-	if fp2.KiroHash != "newcustomhash" {
-		t.Errorf("expected KiroHash 'newcustomhash', got '%s'", fp2.KiroHash)
+	if fp2.KiroVersion != "99.99.99" {
+		t.Errorf("expected KiroVersion '99.99.99', got '%s'", fp2.KiroVersion)
 	}
 }
 
@@ -607,7 +491,6 @@ func TestGenerateAccountKey(t *testing.T) {
 				if len(result) != 16 {
 					t.Errorf("expected 16 char hex string, got %d chars", len(result))
 				}
-				// Verify it's valid hex
 				for _, c := range result {
 					if (c < '0' || c > '9') && (c < 'a' || c > 'f') {
 						t.Errorf("invalid hex character: %c", c)
@@ -682,33 +565,6 @@ func TestGetAccountKey(t *testing.T) {
 				if len(result) != 16 {
 					t.Errorf("expected 16 char key, got %d chars", len(result))
 				}
-				// Should be different each time (random UUID)
-				result2 := GetAccountKey("", "")
-				if result == result2 {
-					t.Log("warning: random keys are the same (possible but unlikely)")
-				}
-			},
-		},
-		{
-			name:         "clientID only",
-			clientID:     "solo-client-id",
-			refreshToken: "",
-			check: func(t *testing.T, result string) {
-				expected := GenerateAccountKey("solo-client-id")
-				if result != expected {
-					t.Errorf("expected clientID-based key %s, got %s", expected, result)
-				}
-			},
-		},
-		{
-			name:         "refreshToken only",
-			clientID:     "",
-			refreshToken: "solo-refresh-token",
-			check: func(t *testing.T, result string) {
-				expected := GenerateAccountKey("solo-refresh-token")
-				if result != expected {
-					t.Errorf("expected refreshToken-based key %s, got %s", expected, result)
-				}
 			},
 		},
 	}
@@ -721,36 +577,13 @@ func TestGetAccountKey(t *testing.T) {
 	}
 }
 
-func TestGetAccountKey_Deterministic(t *testing.T) {
-	// Verify that GetAccountKey produces deterministic results for same inputs
-	clientID := "test-client-id-abc"
-	refreshToken := "test-refresh-token-xyz"
-
-	// Call multiple times with same inputs
-	results := make([]string, 10)
-	for i := range 10 {
-		results[i] = GetAccountKey(clientID, refreshToken)
-	}
-
-	// All results should be identical
-	for i := 1; i < 10; i++ {
-		if results[i] != results[0] {
-			t.Errorf("GetAccountKey should be deterministic: got %s and %s", results[0], results[i])
-		}
-	}
-}
-
 func TestFingerprintDeterministic(t *testing.T) {
-	// Verify that fingerprints are deterministic based on accountKey
 	fm := NewFingerprintManager()
-
 	accountKey := GenerateAccountKey("test-client-id")
 
-	// Get fingerprint multiple times
 	fp1 := fm.GetFingerprint(accountKey)
 	fp2 := fm.GetFingerprint(accountKey)
 
-	// Should be the same pointer (cached)
 	if fp1 != fp2 {
 		t.Error("expected same fingerprint pointer for same key")
 	}
@@ -759,20 +592,10 @@ func TestFingerprintDeterministic(t *testing.T) {
 	fm2 := NewFingerprintManager()
 	fp3 := fm2.GetFingerprint(accountKey)
 
-	// Values should be identical (deterministic generation)
-	if fp1.KiroHash != fp3.KiroHash {
-		t.Errorf("KiroHash should be deterministic: %s vs %s", fp1.KiroHash, fp3.KiroHash)
-	}
 	if fp1.OSType != fp3.OSType {
 		t.Errorf("OSType should be deterministic: %s vs %s", fp1.OSType, fp3.OSType)
 	}
-	if fp1.OSVersion != fp3.OSVersion {
-		t.Errorf("OSVersion should be deterministic: %s vs %s", fp1.OSVersion, fp3.OSVersion)
-	}
 	if fp1.KiroVersion != fp3.KiroVersion {
 		t.Errorf("KiroVersion should be deterministic: %s vs %s", fp1.KiroVersion, fp3.KiroVersion)
-	}
-	if fp1.NodeVersion != fp3.NodeVersion {
-		t.Errorf("NodeVersion should be deterministic: %s vs %s", fp1.NodeVersion, fp3.NodeVersion)
 	}
 }

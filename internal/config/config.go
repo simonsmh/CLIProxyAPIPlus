@@ -677,17 +677,13 @@ type KiroKey struct {
 }
 
 // KiroFingerprintConfig defines a global fingerprint configuration for Kiro requests.
-// When configured, all Kiro requests will use this fixed fingerprint instead of random generation.
+// Matches kiro-cli 2.7.0 (Rust-based CLI) User-Agent format.
 // Empty fields will fall back to random selection from built-in pools.
 type KiroFingerprintConfig struct {
-	OIDCSDKVersion      string `yaml:"oidc-sdk-version,omitempty" json:"oidc-sdk-version,omitempty"`
 	RuntimeSDKVersion   string `yaml:"runtime-sdk-version,omitempty" json:"runtime-sdk-version,omitempty"`
 	StreamingSDKVersion string `yaml:"streaming-sdk-version,omitempty" json:"streaming-sdk-version,omitempty"`
 	OSType              string `yaml:"os-type,omitempty" json:"os-type,omitempty"`
-	OSVersion           string `yaml:"os-version,omitempty" json:"os-version,omitempty"`
-	NodeVersion         string `yaml:"node-version,omitempty" json:"node-version,omitempty"`
 	KiroVersion         string `yaml:"kiro-version,omitempty" json:"kiro-version,omitempty"`
-	KiroHash            string `yaml:"kiro-hash,omitempty" json:"kiro-hash,omitempty"`
 }
 
 // OpenAICompatibility represents the configuration for OpenAI API compatibility

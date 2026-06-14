@@ -565,8 +565,8 @@ func applyDynamicFingerprint(req *http.Request, auth *cliproxyauth.Auth) {
 	if len(keyPrefix) > 8 {
 		keyPrefix = keyPrefix[:8]
 	}
-	log.Debugf("kiro: using dynamic fingerprint for account %s (SDK:%s, OS:%s/%s, Kiro:%s)",
-		keyPrefix+"...", fp.StreamingSDKVersion, fp.OSType, fp.OSVersion, fp.KiroVersion)
+	log.Debugf("kiro: using dynamic fingerprint for account %s (SDK:%s, OS:%s, Kiro:%s)",
+		keyPrefix+"...", fp.StreamingSDKVersion, fp.OSType, fp.KiroVersion)
 }
 
 // PrepareRequest prepares the HTTP request before execution.

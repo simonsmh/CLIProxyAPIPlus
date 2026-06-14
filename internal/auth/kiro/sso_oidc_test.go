@@ -39,7 +39,7 @@ func TestTryListAvailableProfiles_UsesClientIDForAccountKey(t *testing.T) {
 
 	accountKey := GetAccountKey("client-id-123", "refresh-token-456")
 	fp := GlobalFingerprintManager().GetFingerprint(accountKey)
-	expected := fmt.Sprintf("aws-sdk-js/%s KiroIDE-%s-%s", fp.RuntimeSDKVersion, fp.KiroVersion, fp.KiroHash)
+	expected := fmt.Sprintf("aws-sdk-rust/%s appVersion-%s", fp.RuntimeSDKVersion, fp.KiroVersion)
 	got := rt.lastReq.Header.Get("X-Amz-User-Agent")
 	if got != expected {
 		t.Errorf("X-Amz-User-Agent = %q, want %q", got, expected)
@@ -59,7 +59,7 @@ func TestTryListAvailableProfiles_UsesRefreshTokenWhenClientIDMissing(t *testing
 
 	accountKey := GetAccountKey("", "refresh-token-789")
 	fp := GlobalFingerprintManager().GetFingerprint(accountKey)
-	expected := fmt.Sprintf("aws-sdk-js/%s KiroIDE-%s-%s", fp.RuntimeSDKVersion, fp.KiroVersion, fp.KiroHash)
+	expected := fmt.Sprintf("aws-sdk-rust/%s appVersion-%s", fp.RuntimeSDKVersion, fp.KiroVersion)
 	got := rt.lastReq.Header.Get("X-Amz-User-Agent")
 	if got != expected {
 		t.Errorf("X-Amz-User-Agent = %q, want %q", got, expected)
@@ -131,15 +131,15 @@ func TestRegisterClientForAuthCodeWithIDC(t *testing.T) {
 		t.Errorf("Content-Type = %q, want application/json", ct)
 	}
 	ua := capturedReq.Headers.Get("User-Agent")
-	if !strings.Contains(ua, "KiroIDE") {
-		t.Errorf("User-Agent %q does not contain KiroIDE", ua)
+	if !strings.Contains(ua, "appVersion-") {
+		t.Errorf("User-Agent %q does not contain appVersion", ua)
 	}
 	if !strings.Contains(ua, "sso-oidc") {
 		t.Errorf("User-Agent %q does not contain sso-oidc", ua)
 	}
 	xua := capturedReq.Headers.Get("X-Amz-User-Agent")
-	if !strings.Contains(xua, "KiroIDE") {
-		t.Errorf("x-amz-user-agent %q does not contain KiroIDE", xua)
+	if !strings.Contains(xua, "appVersion-") {
+		t.Errorf("x-amz-user-agent %q does not contain appVersion", xua)
 	}
 
 	// Verify body fields
