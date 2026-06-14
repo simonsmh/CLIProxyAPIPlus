@@ -96,8 +96,6 @@ type commandModeOptions struct {
 	kimiLogin          bool
 	cursorLogin        bool
 	kiroLogin          bool
-	kiroGitHubLogin    bool
-	kiroAWSLogin       bool
 	kiroAWSAuthCode    bool
 	kiroImport         bool
 	kiroIDCLogin       bool
@@ -123,8 +121,6 @@ func isOneShotCommandMode(opts commandModeOptions) bool {
 		opts.kimiLogin ||
 		opts.cursorLogin ||
 		opts.kiroLogin ||
-		opts.kiroGitHubLogin ||
-		opts.kiroAWSLogin ||
 		opts.kiroAWSAuthCode ||
 		opts.kiroImport ||
 		opts.kiroIDCLogin ||
@@ -154,8 +150,6 @@ func main() {
 	var kimiLogin bool
 	var cursorLogin bool
 	var kiroLogin bool
-	var kiroGitHubLogin bool
-	var kiroAWSLogin bool
 	var kiroAWSAuthCode bool
 	var kiroImport bool
 	var kiroIDCLogin bool
@@ -196,9 +190,7 @@ func main() {
 	flag.BoolVar(&antigravityLogin, "antigravity-login", false, "Login to Antigravity using OAuth")
 	flag.BoolVar(&kimiLogin, "kimi-login", false, "Login to Kimi using OAuth")
 	flag.BoolVar(&cursorLogin, "cursor-login", false, "Login to Cursor using OAuth")
-	flag.BoolVar(&kiroLogin, "kiro-login", false, "Login to Kiro using AWS Builder ID (authorization code flow)")
-	flag.BoolVar(&kiroGitHubLogin, "kiro-google-login", false, "Login to Kiro using Google OAuth (same as --kiro-login)")
-	flag.BoolVar(&kiroAWSLogin, "kiro-aws-login", false, "Login to Kiro using AWS Builder ID (device code flow)")
+	flag.BoolVar(&kiroLogin, "kiro-login", false, "Login to Kiro using OAuth")
 	flag.BoolVar(&kiroAWSAuthCode, "kiro-aws-authcode", false, "Login to Kiro using AWS Builder ID (authorization code flow, better UX)")
 	flag.BoolVar(&kiroImport, "kiro-import", false, "Import Kiro token from Kiro IDE (~/.aws/sso/cache/kiro-auth-token.json)")
 	flag.BoolVar(&kiroIDCLogin, "kiro-idc-login", false, "Login to Kiro using IAM Identity Center (IDC)")
@@ -658,8 +650,6 @@ func main() {
 		kimiLogin:          kimiLogin,
 		cursorLogin:        cursorLogin,
 		kiroLogin:          kiroLogin,
-		kiroGitHubLogin:    kiroGitHubLogin,
-		kiroAWSLogin:       kiroAWSLogin,
 		kiroAWSAuthCode:    kiroAWSAuthCode,
 		kiroImport:         kiroImport,
 		kiroIDCLogin:       kiroIDCLogin,
@@ -738,7 +728,7 @@ func main() {
 		cmd.DoKimiLogin(cfg, options)
 	} else if cursorLogin {
 		cmd.DoCursorLogin(cfg, options)
-	} else if kiroLogin || kiroGitHubLogin {
+	} else if kiroLogin {
 		// For Kiro auth, default to incognito mode for multi-account support
 		// Users can explicitly override with --no-incognito
 		// Note: This config mutation is safe - auth commands exit after completion
@@ -746,12 +736,6 @@ func main() {
 		setKiroIncognitoMode(cfg, useIncognito, noIncognito)
 		kiro.InitFingerprintConfig(cfg)
 		cmd.DoKiroLogin(cfg, options)
-	} else if kiroAWSLogin {
-		// For Kiro auth, default to incognito mode for multi-account support
-		// Users can explicitly override with --no-incognito
-		setKiroIncognitoMode(cfg, useIncognito, noIncognito)
-		kiro.InitFingerprintConfig(cfg)
-		cmd.DoKiroAWSLogin(cfg, options)
 	} else if kiroAWSAuthCode {
 		// For Kiro auth with authorization code flow (better UX)
 		setKiroIncognitoMode(cfg, useIncognito, noIncognito)

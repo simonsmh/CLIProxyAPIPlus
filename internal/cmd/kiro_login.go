@@ -52,54 +52,6 @@ func DoKiroLogin(cfg *config.Config, options *LoginOptions) {
 	fmt.Println("Kiro authentication successful!")
 }
 
-// DoKiroAWSLogin triggers Kiro authentication with AWS Builder ID.
-// This uses the device code flow for AWS SSO OIDC authentication.
-//
-// Parameters:
-//   - cfg: The application configuration
-//   - options: Login options including prompts
-func DoKiroAWSLogin(cfg *config.Config, options *LoginOptions) {
-	if options == nil {
-		options = &LoginOptions{}
-	}
-
-	// Note: Kiro defaults to incognito mode for multi-account support.
-	// Users can override with --no-incognito if they want to use existing browser sessions.
-
-	manager := newAuthManager()
-
-	// Use KiroAuthenticator with AWS Builder ID login (device code flow)
-	authenticator := sdkAuth.NewKiroAuthenticator()
-	record, err := authenticator.Login(context.Background(), cfg, &sdkAuth.LoginOptions{
-		NoBrowser: options.NoBrowser,
-		Metadata:  map[string]string{},
-		Prompt:    options.Prompt,
-	})
-	if err != nil {
-		log.Errorf("Kiro AWS authentication failed: %v", err)
-		fmt.Println("\nTroubleshooting:")
-		fmt.Println("1. Make sure you have an AWS Builder ID")
-		fmt.Println("2. Complete the authorization in the browser")
-		fmt.Println("3. If callback fails, try: --kiro-import (after logging in via Kiro IDE)")
-		return
-	}
-
-	// Save the auth record
-	savedPath, err := manager.SaveAuth(record, cfg)
-	if err != nil {
-		log.Errorf("Failed to save auth: %v", err)
-		return
-	}
-
-	if savedPath != "" {
-		fmt.Printf("Authentication saved to %s\n", savedPath)
-	}
-	if record != nil && record.Label != "" {
-		fmt.Printf("Authenticated as %s\n", record.Label)
-	}
-	fmt.Println("Kiro AWS authentication successful!")
-}
-
 // DoKiroAWSAuthCodeLogin triggers Kiro authentication with AWS Builder ID using authorization code flow.
 // This provides a better UX than device code flow as it uses automatic browser callback.
 //
