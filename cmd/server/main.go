@@ -734,20 +734,16 @@ func main() {
 		// Note: This config mutation is safe - auth commands exit after completion
 		// and don't share config with StartService (which is in the else branch)
 		setKiroIncognitoMode(cfg, useIncognito, noIncognito)
-		kiro.InitFingerprintConfig(cfg)
 		cmd.DoKiroLogin(cfg, options)
 	} else if kiroAWSAuthCode {
 		// For Kiro auth with authorization code flow (better UX)
 		setKiroIncognitoMode(cfg, useIncognito, noIncognito)
-		kiro.InitFingerprintConfig(cfg)
 		cmd.DoKiroAWSAuthCodeLogin(cfg, options)
 	} else if kiroImport {
-		kiro.InitFingerprintConfig(cfg)
 		cmd.DoKiroImport(cfg, options)
 	} else if kiroIDCLogin {
 		// For Kiro IDC auth, default to incognito mode for multi-account support
 		setKiroIncognitoMode(cfg, useIncognito, noIncognito)
-		kiro.InitFingerprintConfig(cfg)
 		cmd.DoKiroIDCLogin(cfg, options, kiroIDCStartURL, kiroIDCRegion, kiroIDCFlow)
 	} else if xaiLogin {
 		cmd.DoXAILogin(cfg, options)

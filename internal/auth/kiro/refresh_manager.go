@@ -167,10 +167,6 @@ func InitializeAndStart(baseDir string, cfg *config.Config) {
 	manager.Start()
 }
 
-// InitFingerprintConfig is a no-op since fingerprint values are now hardcoded
-// constants matching kiro-cli 2.7.0. Kept for API compatibility with CLI login commands.
-func InitFingerprintConfig(_ *config.Config) {}
-
 // StopGlobalRefreshManager stops the global refresh manager.
 func StopGlobalRefreshManager() {
 	if globalRefreshManager != nil {
