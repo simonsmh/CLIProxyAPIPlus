@@ -189,8 +189,7 @@ func (o *KiroOAuth) exchangeCodeForToken(ctx context.Context, code, codeVerifier
 		return nil, fmt.Errorf("failed to create request: %w", err)
 	}
 
-	req.Header.Set("Content-Type", "application/json")
-	req.Header.Set("User-Agent", kiroUserAgent)
+	SetDesktopRefreshHeaders(req)
 	req.Header.Set("Accept", "application/json, text/plain, */*")
 
 	resp, err := o.httpClient.Do(req)
@@ -256,8 +255,7 @@ func (o *KiroOAuth) RefreshTokenWithFingerprint(ctx context.Context, refreshToke
 		return nil, fmt.Errorf("failed to create request: %w", err)
 	}
 
-	req.Header.Set("Content-Type", "application/json")
-	req.Header.Set("User-Agent", kiroUserAgent)
+	SetDesktopRefreshHeaders(req)
 	req.Header.Set("Accept", "application/json, text/plain, */*")
 
 	resp, err := o.httpClient.Do(req)

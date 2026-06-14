@@ -3,49 +3,107 @@ package kiro
 import (
 	"crypto/sha256"
 	"encoding/hex"
+	"fmt"
 	"net/http"
 
 	"github.com/google/uuid"
 )
 
-// Hardcoded constants matching kiro-cli 2.7.0 (Rust) User-Agent captures.
-// No per-account variation; kiro-cli sends the same UA for all requests.
+// Kiro-cli 2.7.0 UA component constants, captured from real traffic.
 const (
-	// KiroClientName is the OIDC client registration name.
 	KiroClientName = "Kiro CLI"
 
-	// kiroUserAgent is the User-Agent header value for all Kiro requests.
-	// Format: aws-sdk-rust/{sdkVer} ua/2.1 api/{api}/{sdkVer} os/{os} lang/rust/{rustVer} md/appVersion-{appVer} app/{app}
-	kiroUserAgent = "aws-sdk-rust/1.3.15 ua/2.1 api/codewhispererstreaming/0.1.16551 os/macos lang/rust/1.92.0 md/appVersion-2.7.0 app/AmazonQ-For-CLI"
-
-	// kiroAmzUserAgent is the x-amz-user-agent header value (no md/appVersion segment).
-	kiroAmzUserAgent = "aws-sdk-rust/1.3.15 ua/2.1 api/codewhispererstreaming/0.1.16551 os/macos lang/rust/1.92.0 app/AmazonQ-For-CLI"
+	kiroSDKVersion       = "1.3.15" // aws-sdk-rust for runtime/streaming
+	kiroOIDCSDKVersion   = "1.3.10" // aws-sdk-rust for OIDC
+	kiroAPIVersion       = "0.1.16551"
+	kiroOIDCAPIVersion   = "1.92.0"
+	kiroRustVersion      = "1.92.0"
+	kiroOS               = "macos"
+	kiroVersion          = "2.7.0"
+	kiroApp              = "AmazonQ-For-CLI"
+	kiroDesktopUserAgent = "Kiro-CLI" // for auth.desktop.kiro.dev refresh
 )
 
-// SetOIDCHeaders sets headers for AWS OIDC requests (login/token refresh).
+// KiroSdkApi identifies the AWS SDK service segment in the UA.
+type KiroSdkApi string
+
+const (
+	ApiStreaming KiroSdkApi = "codewhispererstreaming"
+	ApiRuntime   KiroSdkApi = "codewhispererruntime"
+	ApiOIDC      KiroSdkApi = "ssooidc"
+)
+
+// kiroUserAgent builds the user-agent and x-amz-user-agent header pair
+// for a given Kiro/AWS service endpoint, matching official kiro-cli 2.7.0 traffic.
+//
+// Parameters:
+//   - api:     The SDK service segment (streaming, runtime, or ssooidc).
+//   - metrics: The m/... metrics segment for x-amz-user-agent (e.g. "F", "F,C", "E").
+//
+// For OIDC, user-agent is the bare form (no ua/, api/, md/, app/ segments),
+// while x-amz-user-agent carries the full form.
+// For runtime/streaming, both headers carry the full form (user-agent has
+// md/appVersion, x-amz-user-agent has m/<metrics>).
+func kiroUserAgent(api KiroSdkApi, metrics string) (userAgent, amzUserAgent string) {
+	sdk := kiroSDKVersion
+	apiVer := kiroAPIVersion
+	if api == ApiOIDC {
+		sdk = kiroOIDCSDKVersion
+		apiVer = kiroOIDCAPIVersion
+	}
+
+	base := fmt.Sprintf("aws-sdk-rust/%s ua/2.1 api/%s/%s os/%s lang/rust/%s",
+		sdk, api, apiVer, kiroOS, kiroRustVersion)
+
+	if api == ApiOIDC {
+		// OIDC user-agent is bare: no ua/, api/, md/, app/ segments
+		userAgent = fmt.Sprintf("aws-sdk-rust/%s os/%s lang/rust/%s",
+			sdk, kiroOS, kiroRustVersion)
+	} else {
+		userAgent = fmt.Sprintf("%s md/appVersion-%s app/%s",
+			base, kiroVersion, kiroApp)
+	}
+
+	amzUserAgent = fmt.Sprintf("%s m/%s app/%s", base, metrics, kiroApp)
+	return
+}
+
+// SetOIDCHeaders sets headers for AWS OIDC requests (RegisterClient, device auth, token).
+// Uses ssooidc API with metrics "E".
 func SetOIDCHeaders(req *http.Request) {
+	ua, amzUA := kiroUserAgent(ApiOIDC, "E")
 	req.Header.Set("Content-Type", "application/json")
-	req.Header.Set("User-Agent", kiroUserAgent)
-	req.Header.Set("x-amz-user-agent", kiroAmzUserAgent)
+	req.Header.Set("User-Agent", ua)
+	req.Header.Set("x-amz-user-agent", amzUA)
 	req.Header.Set("amz-sdk-invocation-id", uuid.New().String())
 	req.Header.Set("amz-sdk-request", "attempt=1; max=4")
 }
 
 // setRuntimeHeaders sets headers for Kiro management API requests
 // (GetProfile, ListAvailableModels, GetUsageLimits).
+// Uses codewhispererruntime API with metrics "F,C".
 func setRuntimeHeaders(req *http.Request, accessToken string, _ string) {
+	ua, amzUA := kiroUserAgent(ApiRuntime, "F,C")
 	req.Header.Set("Authorization", "Bearer "+accessToken)
-	req.Header.Set("User-Agent", kiroUserAgent)
-	req.Header.Set("x-amz-user-agent", kiroAmzUserAgent)
+	req.Header.Set("User-Agent", ua)
+	req.Header.Set("x-amz-user-agent", amzUA)
 	req.Header.Set("amz-sdk-invocation-id", uuid.New().String())
 	req.Header.Set("amz-sdk-request", "attempt=1; max=1")
 }
 
 // SetStreamingHeaders sets User-Agent headers for Kiro streaming API requests
-// (generateAssistantResponse). Exported for use by the executor.
+// (GenerateAssistantResponse). Uses codewhispererstreaming API with metrics "F".
 func SetStreamingHeaders(req *http.Request) {
-	req.Header.Set("User-Agent", kiroUserAgent)
-	req.Header.Set("x-amz-user-agent", kiroAmzUserAgent)
+	ua, amzUA := kiroUserAgent(ApiStreaming, "F")
+	req.Header.Set("User-Agent", ua)
+	req.Header.Set("x-amz-user-agent", amzUA)
+}
+
+// SetDesktopRefreshHeaders sets headers for the Kiro desktop auth service
+// (auth.desktop.kiro.dev/refreshToken). Uses plain "Kiro-CLI" UA.
+func SetDesktopRefreshHeaders(req *http.Request) {
+	req.Header.Set("Content-Type", "application/json")
+	req.Header.Set("User-Agent", kiroDesktopUserAgent)
 }
 
 // GenerateAccountKey returns a 16-char hex key derived from SHA256(seed).

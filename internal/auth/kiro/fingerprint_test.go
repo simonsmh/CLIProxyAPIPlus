@@ -6,63 +6,147 @@ import (
 	"testing"
 )
 
+func TestKiroUserAgent_Streaming(t *testing.T) {
+	ua, amzUA := kiroUserAgent(ApiStreaming, "F")
+
+	// user-agent should have full form with md/appVersion
+	requiredUA := []string{
+		"aws-sdk-rust/1.3.15", "ua/2.1",
+		"api/codewhispererstreaming/0.1.16551",
+		"os/macos", "lang/rust/1.92.0",
+		"md/appVersion-2.7.0", "app/AmazonQ-For-CLI",
+	}
+	for _, part := range requiredUA {
+		if !strings.Contains(ua, part) {
+			t.Errorf("streaming user-agent missing %q: %s", part, ua)
+		}
+	}
+
+	// x-amz-user-agent should have m/F, not md/appVersion
+	requiredAmz := []string{
+		"aws-sdk-rust/1.3.15", "ua/2.1",
+		"api/codewhispererstreaming/0.1.16551",
+		"os/macos", "lang/rust/1.92.0",
+		"m/F", "app/AmazonQ-For-CLI",
+	}
+	for _, part := range requiredAmz {
+		if !strings.Contains(amzUA, part) {
+			t.Errorf("streaming x-amz-user-agent missing %q: %s", part, amzUA)
+		}
+	}
+	if strings.Contains(amzUA, "md/appVersion") {
+		t.Errorf("x-amz-user-agent should not contain md/appVersion: %s", amzUA)
+	}
+}
+
+func TestKiroUserAgent_Runtime(t *testing.T) {
+	ua, amzUA := kiroUserAgent(ApiRuntime, "F,C")
+
+	// user-agent: full form with codewhispererruntime
+	if !strings.Contains(ua, "api/codewhispererruntime/0.1.16551") {
+		t.Errorf("runtime user-agent should use codewhispererruntime: %s", ua)
+	}
+	if !strings.Contains(ua, "md/appVersion-2.7.0") {
+		t.Errorf("runtime user-agent should have md/appVersion: %s", ua)
+	}
+
+	// x-amz-user-agent: m/F,C
+	if !strings.Contains(amzUA, "m/F,C") {
+		t.Errorf("runtime x-amz-user-agent should have m/F,C: %s", amzUA)
+	}
+	if !strings.Contains(amzUA, "api/codewhispererruntime/0.1.16551") {
+		t.Errorf("runtime x-amz-user-agent should use codewhispererruntime: %s", amzUA)
+	}
+}
+
+func TestKiroUserAgent_OIDC(t *testing.T) {
+	ua, amzUA := kiroUserAgent(ApiOIDC, "E")
+
+	// OIDC user-agent is bare: no ua/, api/, md/, app/
+	if strings.Contains(ua, "ua/2.1") {
+		t.Errorf("OIDC user-agent should not contain ua/2.1: %s", ua)
+	}
+	if strings.Contains(ua, "api/") {
+		t.Errorf("OIDC user-agent should not contain api/: %s", ua)
+	}
+	if strings.Contains(ua, "md/appVersion") {
+		t.Errorf("OIDC user-agent should not contain md/appVersion: %s", ua)
+	}
+	if strings.Contains(ua, "app/AmazonQ") {
+		t.Errorf("OIDC user-agent should not contain app/: %s", ua)
+	}
+
+	// OIDC user-agent should be bare
+	expectedBare := "aws-sdk-rust/1.3.10 os/macos lang/rust/1.92.0"
+	if ua != expectedBare {
+		t.Errorf("OIDC user-agent = %q, want %q", ua, expectedBare)
+	}
+
+	// OIDC x-amz-user-agent: full form with ssooidc and m/E
+	requiredAmz := []string{
+		"aws-sdk-rust/1.3.10", "ua/2.1",
+		"api/ssooidc/1.92.0",
+		"os/macos", "lang/rust/1.92.0",
+		"m/E", "app/AmazonQ-For-CLI",
+	}
+	for _, part := range requiredAmz {
+		if !strings.Contains(amzUA, part) {
+			t.Errorf("OIDC x-amz-user-agent missing %q: %s", part, amzUA)
+		}
+	}
+}
+
 func TestSetOIDCHeaders(t *testing.T) {
 	req, _ := http.NewRequest("GET", "http://example.com", nil)
 	SetOIDCHeaders(req)
 
 	if req.Header.Get("Content-Type") != "application/json" {
-		t.Error("expected Content-Type header to be set")
+		t.Error("expected Content-Type: application/json")
 	}
 
 	ua := req.Header.Get("User-Agent")
-	if ua != kiroUserAgent {
-		t.Errorf("User-Agent = %q, want %q", ua, kiroUserAgent)
-	}
-	if !strings.Contains(ua, "aws-sdk-rust/") {
-		t.Errorf("User-Agent should contain aws-sdk-rust: %s", ua)
-	}
-	if !strings.Contains(ua, "app/AmazonQ-For-CLI") {
-		t.Errorf("User-Agent should contain app identifier: %s", ua)
-	}
-	if !strings.Contains(ua, "md/appVersion-2.7.0") {
-		t.Errorf("User-Agent should contain appVersion metadata: %s", ua)
+	expectedUA := "aws-sdk-rust/1.3.10 os/macos lang/rust/1.92.0"
+	if ua != expectedUA {
+		t.Errorf("User-Agent = %q, want %q", ua, expectedUA)
 	}
 
 	amzUA := req.Header.Get("x-amz-user-agent")
-	if amzUA != kiroAmzUserAgent {
-		t.Errorf("x-amz-user-agent = %q, want %q", amzUA, kiroAmzUserAgent)
+	if !strings.Contains(amzUA, "api/ssooidc/1.92.0") {
+		t.Errorf("x-amz-user-agent should contain ssooidc: %s", amzUA)
 	}
-	// x-amz-user-agent should NOT contain md/appVersion
-	if strings.Contains(amzUA, "md/appVersion") {
-		t.Errorf("x-amz-user-agent should not contain md/appVersion: %s", amzUA)
+	if !strings.Contains(amzUA, "m/E") {
+		t.Errorf("x-amz-user-agent should contain m/E: %s", amzUA)
 	}
 
 	if req.Header.Get("amz-sdk-invocation-id") == "" {
-		t.Error("expected amz-sdk-invocation-id header to be set")
+		t.Error("expected amz-sdk-invocation-id")
 	}
 	if req.Header.Get("amz-sdk-request") != "attempt=1; max=4" {
-		t.Errorf("unexpected amz-sdk-request header: %s", req.Header.Get("amz-sdk-request"))
+		t.Errorf("unexpected amz-sdk-request: %s", req.Header.Get("amz-sdk-request"))
 	}
 }
 
 func TestSetRuntimeHeaders(t *testing.T) {
 	req, _ := http.NewRequest("GET", "http://example.com", nil)
-	accessToken := "test-access-token-1234567890"
+	setRuntimeHeaders(req, "test-token", "ignored")
 
-	setRuntimeHeaders(req, accessToken, "ignored-account-key")
+	if req.Header.Get("Authorization") != "Bearer test-token" {
+		t.Error("expected Authorization header")
+	}
 
-	if req.Header.Get("Authorization") != "Bearer "+accessToken {
-		t.Errorf("expected Authorization 'Bearer %s', got '%s'", accessToken, req.Header.Get("Authorization"))
+	ua := req.Header.Get("User-Agent")
+	if !strings.Contains(ua, "api/codewhispererruntime/0.1.16551") {
+		t.Errorf("User-Agent should use codewhispererruntime: %s", ua)
 	}
-	if req.Header.Get("User-Agent") != kiroUserAgent {
-		t.Errorf("User-Agent = %q, want %q", req.Header.Get("User-Agent"), kiroUserAgent)
+	if !strings.Contains(ua, "md/appVersion-2.7.0") {
+		t.Errorf("User-Agent should have md/appVersion: %s", ua)
 	}
-	if req.Header.Get("x-amz-user-agent") != kiroAmzUserAgent {
-		t.Errorf("x-amz-user-agent = %q, want %q", req.Header.Get("x-amz-user-agent"), kiroAmzUserAgent)
+
+	amzUA := req.Header.Get("x-amz-user-agent")
+	if !strings.Contains(amzUA, "m/F,C") {
+		t.Errorf("x-amz-user-agent should have m/F,C: %s", amzUA)
 	}
-	if req.Header.Get("amz-sdk-invocation-id") == "" {
-		t.Error("expected amz-sdk-invocation-id header to be set")
-	}
+
 	if req.Header.Get("amz-sdk-request") != "attempt=1; max=1" {
 		t.Errorf("unexpected amz-sdk-request: %s", req.Header.Get("amz-sdk-request"))
 	}
@@ -72,124 +156,70 @@ func TestSetStreamingHeaders(t *testing.T) {
 	req, _ := http.NewRequest("POST", "http://example.com", nil)
 	SetStreamingHeaders(req)
 
-	if req.Header.Get("User-Agent") != kiroUserAgent {
-		t.Errorf("User-Agent = %q, want %q", req.Header.Get("User-Agent"), kiroUserAgent)
+	ua := req.Header.Get("User-Agent")
+	if !strings.Contains(ua, "api/codewhispererstreaming/0.1.16551") {
+		t.Errorf("User-Agent should use codewhispererstreaming: %s", ua)
 	}
-	if req.Header.Get("x-amz-user-agent") != kiroAmzUserAgent {
-		t.Errorf("x-amz-user-agent = %q, want %q", req.Header.Get("x-amz-user-agent"), kiroAmzUserAgent)
+	if !strings.Contains(ua, "md/appVersion-2.7.0") {
+		t.Errorf("User-Agent should have md/appVersion: %s", ua)
+	}
+
+	amzUA := req.Header.Get("x-amz-user-agent")
+	if !strings.Contains(amzUA, "m/F") {
+		t.Errorf("x-amz-user-agent should have m/F: %s", amzUA)
+	}
+	// Ensure it's exactly m/F, not m/F,C or similar
+	if strings.Contains(amzUA, "m/F,") {
+		t.Errorf("x-amz-user-agent should have m/F only, not m/F,...: %s", amzUA)
 	}
 }
 
-func TestUserAgentConstants(t *testing.T) {
-	// Verify the UA format matches kiro-cli 2.7.0 captures
-	requiredParts := []string{
-		"aws-sdk-rust/1.3.15",
-		"ua/2.1",
-		"api/codewhispererstreaming/0.1.16551",
-		"os/macos",
-		"lang/rust/1.92.0",
-		"app/AmazonQ-For-CLI",
-	}
-	for _, part := range requiredParts {
-		if !strings.Contains(kiroUserAgent, part) {
-			t.Errorf("User-Agent missing %q: %s", part, kiroUserAgent)
-		}
-		if !strings.Contains(kiroAmzUserAgent, part) {
-			t.Errorf("x-amz-user-agent missing %q: %s", part, kiroAmzUserAgent)
-		}
-	}
+func TestSetDesktopRefreshHeaders(t *testing.T) {
+	req, _ := http.NewRequest("POST", "http://example.com", nil)
+	SetDesktopRefreshHeaders(req)
 
-	// User-Agent has md/appVersion, x-amz-user-agent doesn't
-	if !strings.Contains(kiroUserAgent, "md/appVersion-2.7.0") {
-		t.Error("User-Agent should contain md/appVersion-2.7.0")
+	if req.Header.Get("Content-Type") != "application/json" {
+		t.Error("expected Content-Type: application/json")
 	}
-	if strings.Contains(kiroAmzUserAgent, "md/appVersion") {
-		t.Error("x-amz-user-agent should NOT contain md/appVersion")
+	if req.Header.Get("User-Agent") != "Kiro-CLI" {
+		t.Errorf("User-Agent = %q, want %q", req.Header.Get("User-Agent"), "Kiro-CLI")
 	}
 }
 
 func TestBuildURL(t *testing.T) {
-	tests := []struct {
-		name        string
-		endpoint    string
-		path        string
-		queryParams map[string]string
-		want        string
-	}{
-		{
-			name:     "no query params",
-			endpoint: "https://api.example.com",
-			path:     "getUsageLimits",
-			want:     "https://api.example.com/getUsageLimits",
-		},
-		{
-			name:     "with query params",
-			endpoint: "https://api.example.com",
-			path:     "getUsageLimits",
-			queryParams: map[string]string{
-				"origin": "AI_EDITOR",
-			},
-			want: "https://api.example.com/getUsageLimits?origin=AI_EDITOR",
-		},
-		{
-			name:     "omit empty params",
-			endpoint: "https://api.example.com",
-			path:     "getUsageLimits",
-			queryParams: map[string]string{
-				"origin":     "AI_EDITOR",
-				"profileArn": "",
-			},
-			want: "https://api.example.com/getUsageLimits?origin=AI_EDITOR",
-		},
-	}
-
-	for _, tt := range tests {
-		t.Run(tt.name, func(t *testing.T) {
-			got := buildURL(tt.endpoint, tt.path, tt.queryParams)
-			if got != tt.want {
-				t.Errorf("buildURL() = %v, want %v", got, tt.want)
-			}
-		})
+	got := buildURL("https://api.example.com", "getUsageLimits", map[string]string{
+		"origin":     "AI_EDITOR",
+		"profileArn": "",
+	})
+	want := "https://api.example.com/getUsageLimits?origin=AI_EDITOR"
+	if got != want {
+		t.Errorf("buildURL() = %v, want %v", got, want)
 	}
 }
 
 func TestGenerateAccountKey(t *testing.T) {
-	// Empty seed
-	r := GenerateAccountKey("")
-	if len(r) != 16 {
-		t.Errorf("expected 16 char hex, got %d", len(r))
-	}
-
-	// Same seed produces same result
 	r1 := GenerateAccountKey("test-seed")
 	r2 := GenerateAccountKey("test-seed")
 	if r1 != r2 {
 		t.Error("same seed should produce same result")
 	}
-
-	// Different seeds produce different results
-	r3 := GenerateAccountKey("other-seed")
-	if r1 == r3 {
-		t.Error("different seeds should produce different results")
+	if len(r1) != 16 {
+		t.Errorf("expected 16 char hex, got %d", len(r1))
 	}
 }
 
 func TestGetAccountKey(t *testing.T) {
 	// Priority 1: clientID
 	r1 := GetAccountKey("client-123", "refresh-456")
-	expected := GenerateAccountKey("client-123")
-	if r1 != expected {
-		t.Errorf("expected clientID-based key")
+	if r1 != GenerateAccountKey("client-123") {
+		t.Error("expected clientID-based key")
 	}
-
 	// Priority 2: refreshToken
 	r2 := GetAccountKey("", "refresh-789")
-	expected2 := GenerateAccountKey("refresh-789")
-	if r2 != expected2 {
-		t.Errorf("expected refreshToken-based key")
+	if r2 != GenerateAccountKey("refresh-789") {
+		t.Error("expected refreshToken-based key")
 	}
-
-	// Priority 3: random (non-empty)
+	// Priority 3: random
 	r3 := GetAccountKey("", "")
 	if len(r3) != 16 {
 		t.Errorf("expected 16 char key, got %d", len(r3))

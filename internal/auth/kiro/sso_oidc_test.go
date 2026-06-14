@@ -36,9 +36,10 @@ func TestTryListAvailableProfiles_UsesClientIDForAccountKey(t *testing.T) {
 		t.Fatal("expected profileArn, got empty result")
 	}
 
+	_, expectedAmzUA := kiroUserAgent(ApiRuntime, "F,C")
 	got := rt.lastReq.Header.Get("X-Amz-User-Agent")
-	if got != kiroAmzUserAgent {
-		t.Errorf("X-Amz-User-Agent = %q, want %q", got, kiroAmzUserAgent)
+	if got != expectedAmzUA {
+		t.Errorf("X-Amz-User-Agent = %q, want %q", got, expectedAmzUA)
 	}
 }
 
@@ -53,9 +54,10 @@ func TestTryListAvailableProfiles_UsesRefreshTokenWhenClientIDMissing(t *testing
 		t.Fatal("expected profileArn, got empty result")
 	}
 
+	_, expectedAmzUA2 := kiroUserAgent(ApiRuntime, "F,C")
 	got := rt.lastReq.Header.Get("X-Amz-User-Agent")
-	if got != kiroAmzUserAgent {
-		t.Errorf("X-Amz-User-Agent = %q, want %q", got, kiroAmzUserAgent)
+	if got != expectedAmzUA2 {
+		t.Errorf("X-Amz-User-Agent = %q, want %q", got, expectedAmzUA2)
 	}
 }
 
@@ -123,13 +125,15 @@ func TestRegisterClientForAuthCodeWithIDC(t *testing.T) {
 	if ct := capturedReq.Headers.Get("Content-Type"); ct != "application/json" {
 		t.Errorf("Content-Type = %q, want application/json", ct)
 	}
+	expectedUA, expectedAmzUA := kiroUserAgent(ApiOIDC, "E")
+
 	ua := capturedReq.Headers.Get("User-Agent")
-	if ua != kiroUserAgent {
-		t.Errorf("User-Agent = %q, want %q", ua, kiroUserAgent)
+	if ua != expectedUA {
+		t.Errorf("User-Agent = %q, want %q", ua, expectedUA)
 	}
 	xua := capturedReq.Headers.Get("X-Amz-User-Agent")
-	if xua != kiroAmzUserAgent {
-		t.Errorf("x-amz-user-agent = %q, want %q", xua, kiroAmzUserAgent)
+	if xua != expectedAmzUA {
+		t.Errorf("x-amz-user-agent = %q, want %q", xua, expectedAmzUA)
 	}
 
 	// Verify body fields

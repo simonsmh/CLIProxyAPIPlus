@@ -374,8 +374,7 @@ func (c *SocialAuthClient) CreateToken(ctx context.Context, req *CreateTokenRequ
 		return nil, fmt.Errorf("failed to create token request: %w", err)
 	}
 
-	httpReq.Header.Set("Content-Type", "application/json")
-	httpReq.Header.Set("User-Agent", kiroUserAgent)
+	SetDesktopRefreshHeaders(httpReq)
 	httpReq.Header.Set("Accept", "application/json, text/plain, */*")
 
 	resp, err := c.httpClient.Do(httpReq)
@@ -415,8 +414,7 @@ func (c *SocialAuthClient) RefreshSocialToken(ctx context.Context, refreshToken 
 		return nil, fmt.Errorf("failed to create refresh request: %w", err)
 	}
 
-	httpReq.Header.Set("Content-Type", "application/json")
-	httpReq.Header.Set("User-Agent", kiroUserAgent)
+	SetDesktopRefreshHeaders(httpReq)
 	httpReq.Header.Set("Accept", "application/json, text/plain, */*")
 
 	resp, err := c.httpClient.Do(httpReq)
