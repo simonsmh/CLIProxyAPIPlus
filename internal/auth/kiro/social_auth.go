@@ -320,8 +320,8 @@ func (c *SocialAuthClient) handleIDCCallback(ctx context.Context, w http.Respons
 	}()
 }
 
-// generatePKCE generates PKCE code verifier and challenge.
-func generatePKCE() (verifier, challenge string, err error) {
+// GeneratePKCE generates PKCE code verifier and challenge.
+func GeneratePKCE() (verifier, challenge string, err error) {
 	// Generate 32 bytes of random data for verifier
 	b := make([]byte, 32)
 	if _, err := rand.Read(b); err != nil {
@@ -336,8 +336,8 @@ func generatePKCE() (verifier, challenge string, err error) {
 	return verifier, challenge, nil
 }
 
-// generateState generates a random state parameter.
-func generateStateParam() (string, error) {
+// GenerateStateParam generates a random state parameter.
+func GenerateStateParam() (string, error) {
 	b := make([]byte, 16)
 	if _, err := rand.Read(b); err != nil {
 		return "", err
@@ -345,10 +345,9 @@ func generateStateParam() (string, error) {
 	return base64.RawURLEncoding.EncodeToString(b), nil
 }
 
-// buildLoginURL constructs the Kiro OAuth login URL.
-// The login endpoint expects a GET request with query parameters.
+// BuildLoginURL constructs the Kiro OAuth login URL with a custom redirect URI.
 // If provider is empty, login_option is omitted so the user can choose in the browser.
-func (c *SocialAuthClient) buildLoginURL(provider, redirectURI, codeChallenge, state string) string {
+func BuildLoginURL(provider, redirectURI, codeChallenge, state string) string {
 	baseURL := fmt.Sprintf("https://app.kiro.dev/signin?state=%s&code_challenge=%s&code_challenge_method=S256&redirect_uri=%s&redirect_from=kirocli",
 		state,
 		codeChallenge,
@@ -359,6 +358,13 @@ func (c *SocialAuthClient) buildLoginURL(provider, redirectURI, codeChallenge, s
 		baseURL += fmt.Sprintf("&login_option=%s", loginOption)
 	}
 	return baseURL
+}
+
+// buildLoginURL constructs the Kiro OAuth login URL.
+// The login endpoint expects a GET request with query parameters.
+// If provider is empty, login_option is omitted so the user can choose in the browser.
+func (c *SocialAuthClient) buildLoginURL(provider, redirectURI, codeChallenge, state string) string {
+	return BuildLoginURL(provider, redirectURI, codeChallenge, state)
 }
 
 // CreateToken exchanges the authorization code for tokens.
@@ -474,13 +480,13 @@ func (c *SocialAuthClient) LoginWithSocial(ctx context.Context, provider SocialP
 	fmt.Println("\nSetting up authentication...")
 
 	// Step 2: Generate PKCE codes
-	codeVerifier, codeChallenge, err := generatePKCE()
+	codeVerifier, codeChallenge, err := GeneratePKCE()
 	if err != nil {
 		return nil, fmt.Errorf("failed to generate PKCE: %w", err)
 	}
 
 	// Step 3: Generate state
-	state, err := generateStateParam()
+	state, err := GenerateStateParam()
 	if err != nil {
 		return nil, fmt.Errorf("failed to generate state: %w", err)
 	}

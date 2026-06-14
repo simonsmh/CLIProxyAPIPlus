@@ -131,7 +131,7 @@ func (h *OAuthWebHandler) startSocialAuth(c *gin.Context, method string) {
 		return
 	}
 
-	codeVerifier, codeChallenge, err := generatePKCE()
+	codeVerifier, codeChallenge, err := GeneratePKCE()
 	if err != nil {
 		h.renderError(c, "Failed to generate PKCE parameters")
 		return

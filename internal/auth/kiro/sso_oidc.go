@@ -4,9 +4,6 @@ package kiro
 import (
 	"bufio"
 	"context"
-	"crypto/rand"
-	"crypto/sha256"
-	"encoding/base64"
 	"encoding/json"
 	"errors"
 	"fmt"
@@ -1325,27 +1322,6 @@ func (c *SSOOIDCClient) startAuthCodeCallbackServer(ctx context.Context, expecte
 	return redirectURI, resultChan, nil
 }
 
-// generatePKCEForAuthCode generates PKCE code verifier and challenge for authorization code flow.
-func generatePKCEForAuthCode() (verifier, challenge string, err error) {
-	b := make([]byte, 32)
-	if _, err := rand.Read(b); err != nil {
-		return "", "", fmt.Errorf("failed to generate random bytes: %w", err)
-	}
-	verifier = base64.RawURLEncoding.EncodeToString(b)
-	h := sha256.Sum256([]byte(verifier))
-	challenge = base64.RawURLEncoding.EncodeToString(h[:])
-	return verifier, challenge, nil
-}
-
-// generateStateForAuthCode generates a random state parameter.
-func generateStateForAuthCode() (string, error) {
-	b := make([]byte, 16)
-	if _, err := rand.Read(b); err != nil {
-		return "", err
-	}
-	return base64.RawURLEncoding.EncodeToString(b), nil
-}
-
 // CreateTokenWithAuthCode exchanges authorization code for tokens.
 func (c *SSOOIDCClient) CreateTokenWithAuthCode(ctx context.Context, clientID, clientSecret, code, codeVerifier, redirectURI string) (*CreateTokenResponse, error) {
 	payload := map[string]string{
@@ -1447,12 +1423,12 @@ func (c *SSOOIDCClient) LoginWithBuilderIDAuthCode(ctx context.Context) (*KiroTo
 	fmt.Println("╚══════════════════════════════════════════════════════════╝")
 
 	// Step 1: Generate PKCE and state
-	codeVerifier, codeChallenge, err := generatePKCEForAuthCode()
+	codeVerifier, codeChallenge, err := GeneratePKCE()
 	if err != nil {
 		return nil, fmt.Errorf("failed to generate PKCE: %w", err)
 	}
 
-	state, err := generateStateForAuthCode()
+	state, err := GenerateStateParam()
 	if err != nil {
 		return nil, fmt.Errorf("failed to generate state: %w", err)
 	}
@@ -1571,12 +1547,12 @@ func (c *SSOOIDCClient) LoginWithIDCAuthCode(ctx context.Context, startURL, regi
 		region = defaultIDCRegion
 	}
 
-	codeVerifier, codeChallenge, err := generatePKCEForAuthCode()
+	codeVerifier, codeChallenge, err := GeneratePKCE()
 	if err != nil {
 		return nil, fmt.Errorf("failed to generate PKCE: %w", err)
 	}
 
-	state, err := generateStateForAuthCode()
+	state, err := GenerateStateParam()
 	if err != nil {
 		return nil, fmt.Errorf("failed to generate state: %w", err)
 	}
