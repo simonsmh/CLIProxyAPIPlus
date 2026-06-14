@@ -41,9 +41,8 @@ type KiroTokenResponse struct {
 
 // KiroOAuth handles the OAuth flow for Kiro authentication.
 type KiroOAuth struct {
-	httpClient  *http.Client
-	cfg         *config.Config
-	kiroVersion string
+	httpClient *http.Client
+	cfg        *config.Config
 }
 
 // NewKiroOAuth creates a new Kiro OAuth handler.
@@ -52,11 +51,9 @@ func NewKiroOAuth(cfg *config.Config) *KiroOAuth {
 	if cfg != nil {
 		client = util.SetProxy(&cfg.SDKConfig, client)
 	}
-	fp := GlobalFingerprintManager().GetFingerprint("login")
 	return &KiroOAuth{
-		httpClient:  client,
-		cfg:         cfg,
-		kiroVersion: fp.KiroVersion,
+		httpClient: client,
+		cfg:        cfg,
 	}
 }
 
@@ -193,7 +190,7 @@ func (o *KiroOAuth) exchangeCodeForToken(ctx context.Context, code, codeVerifier
 	}
 
 	req.Header.Set("Content-Type", "application/json")
-	req.Header.Set("User-Agent", fmt.Sprintf("appVersion-%s", o.kiroVersion))
+	req.Header.Set("User-Agent", kiroUserAgent)
 	req.Header.Set("Accept", "application/json, text/plain, */*")
 
 	resp, err := o.httpClient.Do(req)
@@ -236,7 +233,7 @@ func (o *KiroOAuth) exchangeCodeForToken(ctx context.Context, code, codeVerifier
 }
 
 // RefreshToken refreshes an expired access token.
-// Uses KiroIDE-style User-Agent to match official Kiro IDE behavior.
+// Uses kiro-cli User-Agent to match official Kiro CLI behavior.
 func (o *KiroOAuth) RefreshToken(ctx context.Context, refreshToken string) (*KiroTokenData, error) {
 	return o.RefreshTokenWithFingerprint(ctx, refreshToken, "")
 }
@@ -260,7 +257,7 @@ func (o *KiroOAuth) RefreshTokenWithFingerprint(ctx context.Context, refreshToke
 	}
 
 	req.Header.Set("Content-Type", "application/json")
-	req.Header.Set("User-Agent", fmt.Sprintf("appVersion-%s", o.kiroVersion))
+	req.Header.Set("User-Agent", kiroUserAgent)
 	req.Header.Set("Accept", "application/json, text/plain, */*")
 
 	resp, err := o.httpClient.Do(req)

@@ -551,22 +551,12 @@ func NewKiroExecutor(cfg *config.Config) *KiroExecutor {
 // Identifier returns the unique identifier for this executor.
 func (e *KiroExecutor) Identifier() string { return "kiro" }
 
-// applyDynamicFingerprint applies account-specific fingerprint headers to the request.
-func applyDynamicFingerprint(req *http.Request, auth *cliproxyauth.Auth) {
-	accountKey := getAccountKey(auth)
-	fp := kiroauth.GlobalFingerprintManager().GetFingerprint(accountKey)
-
-	req.Header.Set("User-Agent", fp.BuildUserAgent())
-	req.Header.Set("X-Amz-User-Agent", fp.BuildAmzUserAgent())
+// applyDynamicFingerprint applies kiro-cli User-Agent headers to the request.
+// All values are hardcoded constants matching kiro-cli 2.7.0 captures.
+func applyDynamicFingerprint(req *http.Request, _ *cliproxyauth.Auth) {
+	kiroauth.SetStreamingHeaders(req)
 	req.Header.Set("x-amzn-kiro-agent-mode", kiroIDEAgentMode)
 	req.Header.Set("x-amzn-codewhisperer-optout", "true")
-
-	keyPrefix := accountKey
-	if len(keyPrefix) > 8 {
-		keyPrefix = keyPrefix[:8]
-	}
-	log.Debugf("kiro: using dynamic fingerprint for account %s (SDK:%s, OS:%s, Kiro:%s)",
-		keyPrefix+"...", fp.StreamingSDKVersion, fp.OSType, fp.KiroVersion)
 }
 
 // PrepareRequest prepares the HTTP request before execution.

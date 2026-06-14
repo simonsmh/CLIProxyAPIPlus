@@ -159,9 +159,6 @@ func (m *RefreshManager) SetOnTokenRefreshed(callback func(tokenID string, token
 
 // InitializeAndStart initializes and starts background refreshing (convenience method).
 func InitializeAndStart(baseDir string, cfg *config.Config) {
-	// Initialize global fingerprint config
-	initGlobalFingerprintConfig(cfg)
-
 	manager := GetRefreshManager()
 	if err := manager.Initialize(baseDir, cfg); err != nil {
 		log.Errorf("refresh manager: initialization failed: %v", err)
@@ -170,25 +167,9 @@ func InitializeAndStart(baseDir string, cfg *config.Config) {
 	manager.Start()
 }
 
-// initGlobalFingerprintConfig loads fingerprint settings from application config.
-func initGlobalFingerprintConfig(cfg *config.Config) {
-	if cfg == nil || cfg.KiroFingerprint == nil {
-		return
-	}
-	fpCfg := cfg.KiroFingerprint
-	SetGlobalFingerprintConfig(&FingerprintConfig{
-		RuntimeSDKVersion:   fpCfg.RuntimeSDKVersion,
-		StreamingSDKVersion: fpCfg.StreamingSDKVersion,
-		OSType:              fpCfg.OSType,
-		KiroVersion:         fpCfg.KiroVersion,
-	})
-	log.Debug("kiro: global fingerprint config loaded")
-}
-
-// InitFingerprintConfig initializes the global fingerprint config from application config.
-func InitFingerprintConfig(cfg *config.Config) {
-	initGlobalFingerprintConfig(cfg)
-}
+// InitFingerprintConfig is a no-op since fingerprint values are now hardcoded
+// constants matching kiro-cli 2.7.0. Kept for API compatibility with CLI login commands.
+func InitFingerprintConfig(_ *config.Config) {}
 
 // StopGlobalRefreshManager stops the global refresh manager.
 func StopGlobalRefreshManager() {

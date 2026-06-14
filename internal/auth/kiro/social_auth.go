@@ -88,7 +88,6 @@ type SocialAuthClient struct {
 	httpClient      *http.Client
 	cfg             *config.Config
 	protocolHandler *ProtocolHandler
-	kiroVersion     string
 }
 
 // NewSocialAuthClient creates a new social auth client.
@@ -97,12 +96,10 @@ func NewSocialAuthClient(cfg *config.Config) *SocialAuthClient {
 	if cfg != nil {
 		client = util.SetProxy(&cfg.SDKConfig, client)
 	}
-	fp := GlobalFingerprintManager().GetFingerprint("login")
 	return &SocialAuthClient{
 		httpClient:      client,
 		cfg:             cfg,
 		protocolHandler: NewProtocolHandler(),
-		kiroVersion:     fp.KiroVersion,
 	}
 }
 
@@ -378,7 +375,7 @@ func (c *SocialAuthClient) CreateToken(ctx context.Context, req *CreateTokenRequ
 	}
 
 	httpReq.Header.Set("Content-Type", "application/json")
-	httpReq.Header.Set("User-Agent", fmt.Sprintf("appVersion-%s", c.kiroVersion))
+	httpReq.Header.Set("User-Agent", kiroUserAgent)
 	httpReq.Header.Set("Accept", "application/json, text/plain, */*")
 
 	resp, err := c.httpClient.Do(httpReq)
@@ -419,7 +416,7 @@ func (c *SocialAuthClient) RefreshSocialToken(ctx context.Context, refreshToken 
 	}
 
 	httpReq.Header.Set("Content-Type", "application/json")
-	httpReq.Header.Set("User-Agent", fmt.Sprintf("appVersion-%s", c.kiroVersion))
+	httpReq.Header.Set("User-Agent", kiroUserAgent)
 	httpReq.Header.Set("Accept", "application/json, text/plain, */*")
 
 	resp, err := c.httpClient.Do(httpReq)

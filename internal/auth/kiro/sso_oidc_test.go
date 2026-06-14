@@ -3,7 +3,6 @@ package kiro
 import (
 	"context"
 	"encoding/json"
-	"fmt"
 	"io"
 	"net/http"
 	"net/http/httptest"
@@ -37,12 +36,9 @@ func TestTryListAvailableProfiles_UsesClientIDForAccountKey(t *testing.T) {
 		t.Fatal("expected profileArn, got empty result")
 	}
 
-	accountKey := GetAccountKey("client-id-123", "refresh-token-456")
-	fp := GlobalFingerprintManager().GetFingerprint(accountKey)
-	expected := fmt.Sprintf("aws-sdk-rust/%s appVersion-%s", fp.RuntimeSDKVersion, fp.KiroVersion)
 	got := rt.lastReq.Header.Get("X-Amz-User-Agent")
-	if got != expected {
-		t.Errorf("X-Amz-User-Agent = %q, want %q", got, expected)
+	if got != kiroAmzUserAgent {
+		t.Errorf("X-Amz-User-Agent = %q, want %q", got, kiroAmzUserAgent)
 	}
 }
 
@@ -57,12 +53,9 @@ func TestTryListAvailableProfiles_UsesRefreshTokenWhenClientIDMissing(t *testing
 		t.Fatal("expected profileArn, got empty result")
 	}
 
-	accountKey := GetAccountKey("", "refresh-token-789")
-	fp := GlobalFingerprintManager().GetFingerprint(accountKey)
-	expected := fmt.Sprintf("aws-sdk-rust/%s appVersion-%s", fp.RuntimeSDKVersion, fp.KiroVersion)
 	got := rt.lastReq.Header.Get("X-Amz-User-Agent")
-	if got != expected {
-		t.Errorf("X-Amz-User-Agent = %q, want %q", got, expected)
+	if got != kiroAmzUserAgent {
+		t.Errorf("X-Amz-User-Agent = %q, want %q", got, kiroAmzUserAgent)
 	}
 }
 
@@ -131,20 +124,17 @@ func TestRegisterClientForAuthCodeWithIDC(t *testing.T) {
 		t.Errorf("Content-Type = %q, want application/json", ct)
 	}
 	ua := capturedReq.Headers.Get("User-Agent")
-	if !strings.Contains(ua, "appVersion-") {
-		t.Errorf("User-Agent %q does not contain appVersion", ua)
-	}
-	if !strings.Contains(ua, "sso-oidc") {
-		t.Errorf("User-Agent %q does not contain sso-oidc", ua)
+	if ua != kiroUserAgent {
+		t.Errorf("User-Agent = %q, want %q", ua, kiroUserAgent)
 	}
 	xua := capturedReq.Headers.Get("X-Amz-User-Agent")
-	if !strings.Contains(xua, "appVersion-") {
-		t.Errorf("x-amz-user-agent %q does not contain appVersion", xua)
+	if xua != kiroAmzUserAgent {
+		t.Errorf("x-amz-user-agent = %q, want %q", xua, kiroAmzUserAgent)
 	}
 
 	// Verify body fields
-	if v, _ := capturedReq.Body["clientName"].(string); v != "Kiro IDE" {
-		t.Errorf("clientName = %q, want %q", v, "Kiro IDE")
+	if v, _ := capturedReq.Body["clientName"].(string); v != "Kiro CLI" {
+		t.Errorf("clientName = %q, want %q", v, "Kiro CLI")
 	}
 	if v, _ := capturedReq.Body["clientType"].(string); v != "public" {
 		t.Errorf("clientType = %q, want %q", v, "public")

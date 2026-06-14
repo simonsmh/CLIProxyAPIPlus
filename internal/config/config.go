@@ -114,10 +114,6 @@ type Config struct {
 	// KiroKey defines a list of Kiro (AWS CodeWhisperer) configurations.
 	KiroKey []KiroKey `yaml:"kiro" json:"kiro"`
 
-	// KiroFingerprint defines a global fingerprint configuration for all Kiro requests.
-	// When set, all Kiro requests will use this fixed fingerprint instead of random generation.
-	KiroFingerprint *KiroFingerprintConfig `yaml:"kiro-fingerprint,omitempty" json:"kiro-fingerprint,omitempty"`
-
 	// KiroPreferredEndpoint sets the global default preferred endpoint for all Kiro providers.
 	// Values: "ide" (default, CodeWhisperer) or "cli" (Amazon Q).
 	KiroPreferredEndpoint string `yaml:"kiro-preferred-endpoint" json:"kiro-preferred-endpoint"`
@@ -674,16 +670,6 @@ type KiroKey struct {
 	// PreferredEndpoint sets the preferred Kiro API endpoint/quota.
 	// Values: "codewhisperer" (default, IDE quota) or "amazonq" (CLI quota).
 	PreferredEndpoint string `yaml:"preferred-endpoint,omitempty" json:"preferred-endpoint,omitempty"`
-}
-
-// KiroFingerprintConfig defines a global fingerprint configuration for Kiro requests.
-// Matches kiro-cli 2.7.0 (Rust-based CLI) User-Agent format.
-// Empty fields will fall back to random selection from built-in pools.
-type KiroFingerprintConfig struct {
-	RuntimeSDKVersion   string `yaml:"runtime-sdk-version,omitempty" json:"runtime-sdk-version,omitempty"`
-	StreamingSDKVersion string `yaml:"streaming-sdk-version,omitempty" json:"streaming-sdk-version,omitempty"`
-	OSType              string `yaml:"os-type,omitempty" json:"os-type,omitempty"`
-	KiroVersion         string `yaml:"kiro-version,omitempty" json:"kiro-version,omitempty"`
 }
 
 // OpenAICompatibility represents the configuration for OpenAI API compatibility

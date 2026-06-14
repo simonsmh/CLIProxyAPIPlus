@@ -57,18 +57,8 @@ func TestGlobalRateLimiter_Reconfigure(t *testing.T) {
 }
 
 func TestInitFingerprintConfig(t *testing.T) {
-	resetKiroRuntimeConfigTestState()
-	t.Cleanup(resetKiroRuntimeConfigTestState)
-
-	InitFingerprintConfig(&config.Config{
-		KiroFingerprint: &config.KiroFingerprintConfig{
-			RuntimeSDKVersion: "3.0.0",
-			KiroVersion:       "1.0.0",
-		},
-	})
-	// Verify fingerprint manager was initialized
-	fm := GlobalFingerprintManager()
-	if fm == nil {
-		t.Fatal("expected fingerprint manager to be initialized")
-	}
+	// InitFingerprintConfig is a no-op since fingerprint values are hardcoded constants.
+	// Just verify it doesn't panic.
+	InitFingerprintConfig(&config.Config{})
+	InitFingerprintConfig(nil)
 }

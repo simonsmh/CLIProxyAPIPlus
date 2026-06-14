@@ -152,7 +152,7 @@ func (c *SSOOIDCClient) RegisterClientWithRegion(ctx context.Context, region str
 	endpoint := getOIDCEndpoint(region)
 
 	payload := map[string]interface{}{
-		"clientName": "Kiro IDE",
+		"clientName": "Kiro CLI",
 		"clientType": "public",
 		"scopes":     []string{"codewhisperer:completions", "codewhisperer:analysis", "codewhisperer:conversations", "codewhisperer:transformations", "codewhisperer:taskassist"},
 		"grantTypes": []string{"urn:ietf:params:oauth:grant-type:device_code", "refresh_token"},
@@ -569,7 +569,7 @@ func (c *SSOOIDCClient) LoginWithIDCAndOptions(ctx context.Context, startURL, re
 // RegisterClient registers a new OIDC client with AWS.
 func (c *SSOOIDCClient) RegisterClient(ctx context.Context) (*RegisterClientResponse, error) {
 	payload := map[string]interface{}{
-		"clientName": "Kiro IDE",
+		"clientName": "Kiro CLI",
 		"clientType": "public",
 		"scopes":     []string{"codewhisperer:completions", "codewhisperer:analysis", "codewhisperer:conversations", "codewhisperer:transformations", "codewhisperer:taskassist"},
 		"grantTypes": []string{"urn:ietf:params:oauth:grant-type:device_code", "refresh_token"},
@@ -1150,7 +1150,7 @@ func (c *SSOOIDCClient) tryListProfilesLegacy(ctx context.Context, accessToken, 
 // RegisterClientForAuthCode registers a new OIDC client for authorization code flow.
 func (c *SSOOIDCClient) RegisterClientForAuthCode(ctx context.Context, redirectURI string) (*RegisterClientResponse, error) {
 	payload := map[string]interface{}{
-		"clientName":   "Kiro IDE",
+		"clientName":   "Kiro CLI",
 		"clientType":   "public",
 		"scopes":       []string{"codewhisperer:completions", "codewhisperer:analysis", "codewhisperer:conversations", "codewhisperer:transformations", "codewhisperer:taskassist"},
 		"grantTypes":   []string{"authorization_code", "refresh_token"},
@@ -1197,7 +1197,7 @@ func (c *SSOOIDCClient) RegisterClientForAuthCodeWithIDC(ctx context.Context, re
 	endpoint := getOIDCEndpoint(region)
 
 	payload := map[string]interface{}{
-		"clientName":   "Kiro IDE",
+		"clientName":   "Kiro CLI",
 		"clientType":   "public",
 		"scopes":       []string{"codewhisperer:completions", "codewhisperer:analysis", "codewhisperer:conversations", "codewhisperer:transformations", "codewhisperer:taskassist"},
 		"grantTypes":   []string{"authorization_code", "refresh_token"},
