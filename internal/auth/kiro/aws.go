@@ -493,15 +493,27 @@ func ExtractIDCIdentifier(startURL string) string {
 // Priority: email > startUrl identifier (for IDC) > authMethod only
 // Email is unique, so no sequence suffix needed. Sequence is only added
 // when email is unavailable to prevent filename collisions.
-// Format: kiro-{authMethod}-{identifier}[-{seq}].json
+// Format: kiro-{authMethod}[-{provider}]-{identifier}[-{seq}].json
+// For social auth, provider (google/github) is included in the filename.
 func GenerateTokenFileName(tokenData *KiroTokenData) string {
 	authMethod := sanitizeTokenFileComponent(tokenData.AuthMethod, "unknown")
 
+	// For social auth, include the provider in the filename
+	provider := ""
+	if authMethod == "social" && tokenData.Provider != "" {
+		provider = strings.ToLower(tokenData.Provider)
+	}
+
+	// Build the auth method prefix: "kiro-social-google" or "kiro-builder-id"
+	methodPrefix := authMethod
+	if provider != "" {
+		methodPrefix = authMethod + "-" + provider
+	}
+
 	// Priority 1: Use email if available (no sequence needed, email is unique)
 	if tokenData.Email != "" {
-		// Sanitize email for filename (replace @ and . with -)
-		sanitizedEmail := sanitizeTokenFileComponent(tokenData.Email, "account")
-		return fmt.Sprintf("kiro-%s-%s.json", authMethod, sanitizedEmail)
+		sanitizedEmail := SanitizeEmailForFilename(tokenData.Email)
+		return fmt.Sprintf("kiro-%s-%s.json", methodPrefix, sanitizedEmail)
 	}
 
 	// Generate sequence only when email is unavailable
@@ -511,12 +523,12 @@ func GenerateTokenFileName(tokenData *KiroTokenData) string {
 	if authMethod == "idc" && tokenData.StartURL != "" {
 		identifier := sanitizeTokenFileComponent(ExtractIDCIdentifier(tokenData.StartURL), "")
 		if identifier != "" {
-			return fmt.Sprintf("kiro-%s-%s-%05d.json", authMethod, identifier, seq)
+			return fmt.Sprintf("kiro-%s-%s-%05d.json", methodPrefix, identifier, seq)
 		}
 	}
 
 	// Priority 3: Fallback to authMethod only with sequence
-	return fmt.Sprintf("kiro-%s-%05d.json", authMethod, seq)
+	return fmt.Sprintf("kiro-%s-%05d.json", methodPrefix, seq)
 }
 
 func sanitizeTokenFileComponent(value, fallback string) string {
@@ -552,6 +564,49 @@ func sanitizeTokenFileComponent(value, fallback string) string {
 
 // DefaultKiroRegion is the fallback region when none is specified.
 const DefaultKiroRegion = "us-east-1"
+
+// DefaultBuilderIDProfileArn is the shared profile ARN that kiro-cli hardcodes
+// for AWS Builder ID (free-tier) tokens. Builder ID tokens cannot call
+// profile-management APIs (ListAvailableProfiles/GetProfile all reject them),
+// so kiro-cli sends this constant ARN verbatim in ListAvailableModels and
+// GenerateAssistantResponse requests. Captured from kiro-cli 2.7.0 traffic.
+const DefaultBuilderIDProfileArn = "arn:aws:codewhisperer:us-east-1:638616132270:profile/AAAACCCCXXXX"
+
+// ssoToAPIRegionMap maps SSO/OIDC regions to Kiro API regions.
+// The Kiro management API is only deployed in a subset of regions.
+// Tokens issued by an SSO instance in e.g. ap-northeast-1 must be sent
+// to the us-east-1 API endpoint. This mirrors the endpoint resolution
+// that kiro-cli performs internally via the AWS SDK partition resolver.
+var ssoToAPIRegionMap = map[string]string{
+	"us-west-1":      "us-east-1",
+	"us-west-2":      "us-east-1",
+	"us-east-2":      "us-east-1",
+	"ap-southeast-1": "us-east-1",
+	"ap-southeast-2": "us-east-1",
+	"ap-northeast-1": "us-east-1",
+	"ap-northeast-2": "us-east-1",
+	"ap-south-1":     "us-east-1",
+	"eu-west-1":      "eu-central-1",
+	"eu-west-2":      "eu-central-1",
+	"eu-west-3":      "eu-central-1",
+	"eu-north-1":     "eu-central-1",
+	"eu-south-1":     "eu-central-1",
+	"eu-south-2":     "eu-central-1",
+	"eu-central-2":   "eu-central-1",
+}
+
+// ResolveKiroAPIRegion maps an SSO/OIDC region to the Kiro API region.
+// If the SSO region is not in the mapping, it is returned as-is (it may
+// already be an API region like us-east-1 or eu-central-1).
+func ResolveKiroAPIRegion(ssoRegion string) string {
+	if ssoRegion == "" {
+		return DefaultKiroRegion
+	}
+	if apiRegion, ok := ssoToAPIRegionMap[ssoRegion]; ok {
+		return apiRegion
+	}
+	return ssoRegion
+}
 
 // GetCodeWhispererLegacyEndpoint returns the legacy CodeWhisperer JSON-RPC endpoint.
 // This endpoint supports JSON-RPC style requests with x-amz-target headers.

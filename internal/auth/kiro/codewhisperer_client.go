@@ -134,20 +134,90 @@ func (c *CodeWhispererClient) FetchUserEmailFromAPI(ctx context.Context, accessT
 // FetchUserEmailWithFallback fetches user email with multiple fallback methods.
 // Priority: 1. CodeWhisperer API  2. userinfo endpoint  3. JWT parsing
 func FetchUserEmailWithFallback(ctx context.Context, cfg *config.Config, accessToken, clientID, refreshToken string) string {
-	// Method 1: Try CodeWhisperer API (most reliable)
+	return cwFetchEmail(ctx, cfg, accessToken, clientID, refreshToken, "")
+}
+
+// cwFetchEmail fetches user email with multiple fallback methods and optional profileArn.
+// For social tokens that have a profileArn, passing it enables correct endpoint routing.
+// Priority: 1. CodeWhisperer API (with profileArn + isEmailRequired)  2. CodeWhisperer API (isEmailRequired only)  3. userinfo endpoint  4. JWT parsing
+func cwFetchEmail(ctx context.Context, cfg *config.Config, accessToken, clientID, refreshToken, profileArn string) string {
 	cwClient := NewCodeWhispererClient(cfg, "")
+
+	// Method 1: Try CodeWhisperer API with profileArn AND isEmailRequired
+	if profileArn != "" {
+		resp, err := cwClient.getUsageLimitsWithEmail(ctx, accessToken, clientID, refreshToken, profileArn)
+		if err != nil {
+			log.Debugf("cwFetchEmail: GetUsageLimits with profileArn failed: %v", err)
+		} else if resp.UserInfo != nil && resp.UserInfo.Email != "" {
+			log.Debugf("cwFetchEmail: got email from API with profileArn: %s", resp.UserInfo.Email)
+			return resp.UserInfo.Email
+		}
+	}
+
+	// Method 2: Try CodeWhisperer API without profileArn (sets isEmailRequired=true)
 	email := cwClient.FetchUserEmailFromAPI(ctx, accessToken, clientID, refreshToken)
 	if email != "" {
 		return email
 	}
 
-	// Method 2: Try SSO OIDC userinfo endpoint
+	// Method 3: Try SSO OIDC userinfo endpoint
 	ssoClient := NewSSOOIDCClient(cfg)
 	email = ssoClient.FetchUserEmail(ctx, accessToken)
 	if email != "" {
 		return email
 	}
 
-	// Method 3: Fallback to JWT parsing
+	// Method 4: Fallback to JWT parsing
 	return ExtractEmailFromJWT(accessToken)
+}
+
+// getUsageLimitsWithEmail calls GetUsageLimits with both profileArn and isEmailRequired=true.
+// This ensures the API returns the user's email even when a profileArn is specified.
+func (c *CodeWhispererClient) getUsageLimitsWithEmail(ctx context.Context, accessToken, clientID, refreshToken, profileArn string) (*UsageLimitsResponse, error) {
+	queryParams := map[string]string{
+		"origin":          "AI_EDITOR",
+		"resourceType":    "AGENTIC_REQUEST",
+		"profileArn":      profileArn,
+		"isEmailRequired": "true",
+	}
+	endpoint := GetKiroAPIEndpointFromProfileArn(profileArn)
+	url := buildURL(endpoint, pathGetUsageLimits, queryParams)
+
+	req, err := http.NewRequestWithContext(ctx, http.MethodGet, url, nil)
+	if err != nil {
+		return nil, fmt.Errorf("failed to create request: %w", err)
+	}
+
+	accountKey := GetAccountKey(clientID, refreshToken)
+	setRuntimeHeaders(req, accessToken, accountKey)
+
+	log.Debugf("codewhisperer: GET %s (with isEmailRequired)", url)
+
+	resp, err := c.httpClient.Do(req)
+	if err != nil {
+		return nil, fmt.Errorf("request failed: %w", err)
+	}
+	defer func() {
+		if err := resp.Body.Close(); err != nil {
+			log.Debugf("codewhisperer: failed to close response body: %v", err)
+		}
+	}()
+
+	body, err := io.ReadAll(resp.Body)
+	if err != nil {
+		return nil, fmt.Errorf("failed to read response: %w", err)
+	}
+
+	log.Debugf("codewhisperer: status=%d", resp.StatusCode)
+
+	if resp.StatusCode != http.StatusOK {
+		return nil, fmt.Errorf("API returned status %d: %s", resp.StatusCode, string(body))
+	}
+
+	var result UsageLimitsResponse
+	if err := json.Unmarshal(body, &result); err != nil {
+		return nil, fmt.Errorf("failed to parse response: %w", err)
+	}
+
+	return &result, nil
 }

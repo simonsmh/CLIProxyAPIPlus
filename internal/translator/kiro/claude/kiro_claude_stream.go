@@ -187,6 +187,7 @@ func PendingTagSuffix(buffer, tag string) int {
 // These events trigger Claude Code's search indicator UI.
 // The caller is responsible for sending message_start before and message_delta/stop after.
 func GenerateSearchIndicatorEvents(
+	toolName string,
 	query string,
 	toolUseID string,
 	searchResults *WebSearchResults,
@@ -201,7 +202,7 @@ func GenerateSearchIndicatorEvents(
 		"content_block": map[string]interface{}{
 			"id":    toolUseID,
 			"type":  "server_tool_use",
-			"name":  "web_search",
+			"name":  toolName,
 			"input": map[string]interface{}{},
 		},
 	}

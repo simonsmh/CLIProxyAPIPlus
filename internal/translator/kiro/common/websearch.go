@@ -1,6 +1,7 @@
 package common
 
 import (
+	"strings"
 	"sync/atomic"
 )
 
@@ -40,15 +41,11 @@ func SetWebSearchDescription(desc string) {
 // IsWebSearchToolName returns true when the supplied name matches any
 // shape that should be treated as the Kiro `web_search` tool.
 func IsWebSearchToolName(name string) bool {
-	return name == "web_search"
+	return name == "web_search" || strings.HasPrefix(name, "web_search") || strings.HasPrefix(name, "web_fetch")
 }
 
-// RenameWebSearchTool rewrites a tool spec's name and description to
-// the form Q's chat endpoint accepts. If the input name isn't
-// `web_search`, the inputs are returned unchanged.
-//
-// The new description prefers the live MCP description (set by
-// SetWebSearchDescription) and falls back to remoteWebSearchFallbackDescription.
+// RenameWebSearchTool rewrites a tool spec's description to the live MCP description.
+// It preserves the original name instead of renaming to remote_web_search.
 func RenameWebSearchTool(name, description string) (string, string) {
 	if !IsWebSearchToolName(name) {
 		return name, description
@@ -58,15 +55,10 @@ func RenameWebSearchTool(name, description string) (string, string) {
 	} else {
 		description = remoteWebSearchFallbackDescription
 	}
-	return RemoteWebSearchToolName, description
+	return name, description
 }
 
-// RenameWebSearchToolUse rewrites a tool_use's tool name to match the
-// renamed spec, so the assistant history references resolve against
-// the right entry. Returns the input unchanged if it isn't `web_search`.
+// RenameWebSearchToolUse is a no-op that preserves the original tool_use name.
 func RenameWebSearchToolUse(name string) string {
-	if IsWebSearchToolName(name) {
-		return RemoteWebSearchToolName
-	}
 	return name
 }

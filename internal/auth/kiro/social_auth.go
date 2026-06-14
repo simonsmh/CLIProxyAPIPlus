@@ -8,6 +8,7 @@ import (
 	"crypto/sha256"
 	"encoding/base64"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"html"
 	"io"
@@ -78,6 +79,8 @@ type WebCallbackResult struct {
 	State       string
 	Error       string
 	RedirectURI string
+	LoginOption string
+	TokenData   *KiroTokenData // Set when IDC/BuilderID flow completes inside callback handler
 }
 
 // SocialAuthClient handles social authentication with Kiro.
@@ -107,11 +110,12 @@ func NewSocialAuthClient(cfg *config.Config) *SocialAuthClient {
 
 // startWebCallbackServer starts a local HTTP server to receive the OAuth callback.
 // This is used instead of the kiro:// protocol handler to avoid redirect_mismatch errors.
-func (c *SocialAuthClient) startWebCallbackServer(ctx context.Context, expectedState string) (string, <-chan WebCallbackResult, error) {
+// Returns the redirect URI, a result channel, a shutdown function, and any error.
+func (c *SocialAuthClient) startWebCallbackServer(ctx context.Context, expectedState string) (string, <-chan WebCallbackResult, func(), error) {
 	// Try to find an available port - use localhost like Kiro does
 	listener, err := net.Listen("tcp", fmt.Sprintf("localhost:%d", socialAuthCallbackPort))
 	if err != nil {
-		return "", nil, fmt.Errorf("failed to start callback server on port %d: %w", socialAuthCallbackPort, err)
+		return "", nil, nil, fmt.Errorf("failed to start callback server on port %d: %w", socialAuthCallbackPort, err)
 	}
 
 	port := listener.Addr().(*net.TCPAddr).Port
@@ -122,6 +126,10 @@ func (c *SocialAuthClient) startWebCallbackServer(ctx context.Context, expectedS
 
 	server := &http.Server{
 		ReadHeaderTimeout: 10 * time.Second,
+	}
+
+	shutdownServer := func() {
+		_ = server.Shutdown(context.Background())
 	}
 
 	mux := http.NewServeMux()
@@ -156,13 +164,24 @@ func (c *SocialAuthClient) startWebCallbackServer(ctx context.Context, expectedS
 			return
 		}
 
+		loginOption := r.URL.Query().Get("login_option")
+
+		// Check for IDC/BuilderID callback (issuer_url present, no code)
+		// Must be checked BEFORE writing response body, otherwise redirect headers cannot be set.
+		issuerURL := r.URL.Query().Get("issuer_url")
+		if issuerURL != "" {
+			idcRegion := r.URL.Query().Get("idc_region")
+			c.handleIDCCallback(ctx, w, issuerURL, idcRegion, loginOption, resultChan)
+			return
+		}
+
+		// Social login (Google/GitHub): write success response
 		w.Header().Set("Content-Type", "text/html; charset=utf-8")
 		fmt.Fprint(w, `<!DOCTYPE html>
 <html><head><title>Login Successful</title></head>
 <body><h1>Login Successful!</h1><p>You can close this window and return to the terminal.</p>
 <script>window.close();</script></body></html>`)
 
-		loginOption := r.URL.Query().Get("login_option")
 		// The actual redirect URI registered on AWS Cognito includes query parameters
 		path := r.URL.Path
 		if path == "/" {
@@ -171,12 +190,9 @@ func (c *SocialAuthClient) startWebCallbackServer(ctx context.Context, expectedS
 		actualRedirectURI := fmt.Sprintf("http://localhost:3128%s", path)
 		if loginOption != "" {
 			actualRedirectURI = fmt.Sprintf("%s?login_option=%s", actualRedirectURI, loginOption)
-		} else {
-			// default to google if none specified
-			actualRedirectURI = fmt.Sprintf("%s?login_option=google", actualRedirectURI)
 		}
 
-		resultChan <- WebCallbackResult{Code: code, State: state, RedirectURI: actualRedirectURI}
+		resultChan <- WebCallbackResult{Code: code, State: state, RedirectURI: actualRedirectURI, LoginOption: loginOption}
 	})
 
 	server.Handler = mux
@@ -191,12 +207,122 @@ func (c *SocialAuthClient) startWebCallbackServer(ctx context.Context, expectedS
 		select {
 		case <-ctx.Done():
 		case <-time.After(socialAuthTimeout):
-		case <-resultChan:
 		}
 		_ = server.Shutdown(context.Background())
 	}()
 
-	return redirectURI, resultChan, nil
+	return redirectURI, resultChan, shutdownServer, nil
+}
+
+// handleIDCCallback handles IDC/BuilderID callback by starting the SSO OIDC device code flow.
+// This is triggered when the Kiro signin page redirects back with issuer_url parameter.
+// The browser is redirected to the device verification URL, and the device code is polled in background.
+func (c *SocialAuthClient) handleIDCCallback(ctx context.Context, w http.ResponseWriter, issuerURL, idcRegion, loginOption string, resultChan chan<- WebCallbackResult) {
+	if idcRegion == "" {
+		idcRegion = "us-east-1"
+	}
+
+	log.Debugf("kiro social auth: IDC/BuilderID callback received, issuer_url=%s, login_option=%s, region=%s", issuerURL, loginOption, idcRegion)
+
+	ssoClient := NewSSOOIDCClient(c.cfg)
+
+	// Step 1: Register OIDC client
+	regResp, err := ssoClient.RegisterClientWithRegion(ctx, idcRegion)
+	if err != nil {
+		w.Header().Set("Content-Type", "text/html; charset=utf-8")
+		w.WriteHeader(http.StatusInternalServerError)
+		fmt.Fprint(w, `<!DOCTYPE html><html><head><title>Login Failed</title></head><body><h1>Login Failed</h1><p>Failed to register OIDC client.</p></body></html>`)
+		resultChan <- WebCallbackResult{Error: fmt.Sprintf("IDC client registration failed: %v", err)}
+		return
+	}
+
+	// Step 2: Start device authorization
+	authResp, err := ssoClient.StartDeviceAuthorizationWithIDC(ctx, regResp.ClientID, regResp.ClientSecret, issuerURL, idcRegion)
+	if err != nil {
+		w.Header().Set("Content-Type", "text/html; charset=utf-8")
+		w.WriteHeader(http.StatusInternalServerError)
+		fmt.Fprint(w, `<!DOCTYPE html><html><head><title>Login Failed</title></head><body><h1>Login Failed</h1><p>Failed to start device authorization.</p></body></html>`)
+		resultChan <- WebCallbackResult{Error: fmt.Sprintf("IDC device authorization failed: %v", err)}
+		return
+	}
+
+	// Step 3: Redirect browser to device verification URL
+	w.Header().Set("Location", authResp.VerificationURIComplete)
+	w.WriteHeader(http.StatusFound)
+	w.Header().Set("Content-Type", "text/html; charset=utf-8")
+	fmt.Fprintf(w, `<!DOCTYPE html><html><head><title>Redirecting</title></head><body><p>Redirecting to device verification...</p><p>If not redirected, <a href="%s">click here</a>.</p></body></html>`, html.EscapeString(authResp.VerificationURIComplete))
+
+	fmt.Printf("\n  AWS device code: %s\n", authResp.UserCode)
+	fmt.Println("  Confirm the code in the browser...")
+
+	// Step 4: Poll for device code in background
+	go func() {
+		interval := pollInterval
+		if authResp.Interval > 0 {
+			interval = time.Duration(authResp.Interval) * time.Second
+		}
+		deadline := time.Now().Add(time.Duration(authResp.ExpiresIn) * time.Second)
+
+		for time.Now().Before(deadline) {
+			select {
+			case <-ctx.Done():
+				resultChan <- WebCallbackResult{Error: "cancelled"}
+				return
+			case <-time.After(interval):
+				tokenResp, err := ssoClient.CreateTokenWithRegion(ctx, regResp.ClientID, regResp.ClientSecret, authResp.DeviceCode, idcRegion)
+				if err != nil {
+					if errors.Is(err, ErrAuthorizationPending) {
+						fmt.Print(".")
+						continue
+					}
+					if errors.Is(err, ErrSlowDown) {
+						interval += 5 * time.Second
+						continue
+					}
+					resultChan <- WebCallbackResult{Error: fmt.Sprintf("IDC token creation failed: %v", err)}
+					return
+				}
+
+				fmt.Println("\n\n✓ AWS authorization successful!")
+
+				// Fetch profile and email
+				profileArn := ssoClient.FetchProfileArn(ctx, tokenResp.AccessToken, regResp.ClientID, tokenResp.RefreshToken, idcRegion)
+				email := FetchUserEmailWithFallback(ctx, c.cfg, tokenResp.AccessToken, regResp.ClientID, tokenResp.RefreshToken)
+
+				// Fallback to default Builder ID profile ARN if FetchProfileArn returns empty
+				if profileArn == "" {
+					profileArn = DefaultBuilderIDProfileArn
+					log.Debug("kiro social auth: FetchProfileArn returned empty, using default Builder ID profile ARN")
+				}
+
+				expiresAt := time.Now().Add(time.Duration(tokenResp.ExpiresIn) * time.Second)
+
+				authMethod := "idc"
+				if loginOption == "builderid" {
+					authMethod = "builder-id"
+				}
+
+				resultChan <- WebCallbackResult{
+					TokenData: &KiroTokenData{
+						AccessToken:  tokenResp.AccessToken,
+						RefreshToken: tokenResp.RefreshToken,
+						ProfileArn:   profileArn,
+						ExpiresAt:    expiresAt.Format(time.RFC3339),
+						AuthMethod:   authMethod,
+						Provider:     "AWS",
+						ClientID:     regResp.ClientID,
+						ClientSecret: regResp.ClientSecret,
+						Email:        email,
+						StartURL:     issuerURL,
+						Region:       idcRegion,
+					},
+					LoginOption: loginOption,
+				}
+				return
+			}
+		}
+		resultChan <- WebCallbackResult{Error: "AWS authorization timed out"}
+	}()
 }
 
 // generatePKCE generates PKCE code verifier and challenge.
@@ -226,14 +352,18 @@ func generateStateParam() (string, error) {
 
 // buildLoginURL constructs the Kiro OAuth login URL.
 // The login endpoint expects a GET request with query parameters.
+// If provider is empty, login_option is omitted so the user can choose in the browser.
 func (c *SocialAuthClient) buildLoginURL(provider, redirectURI, codeChallenge, state string) string {
-	loginOption := strings.ToLower(provider)
-	return fmt.Sprintf("https://app.kiro.dev/signin?state=%s&code_challenge=%s&code_challenge_method=S256&redirect_uri=%s&redirect_from=kirocli&login_option=%s",
+	baseURL := fmt.Sprintf("https://app.kiro.dev/signin?state=%s&code_challenge=%s&code_challenge_method=S256&redirect_uri=%s&redirect_from=kirocli",
 		state,
 		codeChallenge,
 		url.QueryEscape(redirectURI),
-		loginOption,
 	)
+	if provider != "" {
+		loginOption := strings.ToLower(provider)
+		baseURL += fmt.Sprintf("&login_option=%s", loginOption)
+	}
+	return baseURL
 }
 
 // CreateToken exchanges the authorization code for tokens.
@@ -339,7 +469,11 @@ func (c *SocialAuthClient) LoginWithSocial(ctx context.Context, provider SocialP
 	providerName := string(provider)
 
 	fmt.Println("\n╔══════════════════════════════════════════════════════════╗")
-	fmt.Printf("║         Kiro Authentication (%s)                    ║\n", providerName)
+	if providerName != "" {
+		fmt.Printf("║         Kiro Authentication (%s)                    ║\n", providerName)
+	} else {
+		fmt.Println("║              Kiro Authentication                       ║")
+	}
 	fmt.Println("╚══════════════════════════════════════════════════════════╝")
 
 	// Step 1: Start local HTTP callback server (instead of kiro:// protocol handler)
@@ -359,10 +493,11 @@ func (c *SocialAuthClient) LoginWithSocial(ctx context.Context, provider SocialP
 	}
 
 	// Step 4: Start local HTTP callback server
-	redirectURI, resultChan, err := c.startWebCallbackServer(ctx, state)
+	redirectURI, resultChan, shutdownServer, err := c.startWebCallbackServer(ctx, state)
 	if err != nil {
 		return nil, fmt.Errorf("failed to start callback server: %w", err)
 	}
+	defer shutdownServer()
 	log.Debugf("kiro social auth: callback server started at %s", redirectURI)
 
 	// Step 5: Build the login URL using HTTP redirect URI
@@ -384,7 +519,11 @@ func (c *SocialAuthClient) LoginWithSocial(ctx context.Context, provider SocialP
 
 	// Step 6: Open browser for user authentication
 	fmt.Println("\n════════════════════════════════════════════════════════════")
-	fmt.Printf("  Opening browser for %s authentication...\n", providerName)
+	if providerName != "" {
+		fmt.Printf("  Opening browser for %s authentication...\n", providerName)
+	} else {
+		fmt.Println("  Opening browser for authentication (choose Google or GitHub)...")
+	}
 	fmt.Println("════════════════════════════════════════════════════════════")
 	fmt.Printf("\n  URL: %s\n\n", authURL)
 
@@ -407,6 +546,15 @@ func (c *SocialAuthClient) LoginWithSocial(ctx context.Context, provider SocialP
 	case callback := <-resultChan:
 		if callback.Error != "" {
 			return nil, fmt.Errorf("authentication error: %s", callback.Error)
+		}
+
+		// If IDC/BuilderID flow completed inside callback handler, return directly
+		if callback.TokenData != nil {
+			fmt.Println("\n✓ AWS authentication successful!")
+			if callback.TokenData.Email != "" {
+				fmt.Printf("  Logged in as: %s\n", callback.TokenData.Email)
+			}
+			return callback.TokenData, nil
 		}
 
 		// State is already validated by the callback server
@@ -444,19 +592,16 @@ func (c *SocialAuthClient) LoginWithSocial(ctx context.Context, provider SocialP
 		}
 		expiresAt := time.Now().Add(time.Duration(expiresIn) * time.Second)
 
-		// Try to extract email from JWT access token first
-		email := ExtractEmailFromJWT(tokenResp.AccessToken)
+		// Try multiple methods to extract email, then fall back to manual prompt
+		email := cwFetchEmail(ctx, c.cfg, tokenResp.AccessToken, "", tokenResp.RefreshToken, tokenResp.ProfileArn)
+		if email == "" {
+			email = promptAccountLabel()
+		}
 
-		// If no email in JWT, ask user for account label (only in interactive mode)
-		if email == "" && isInteractiveTerminal() {
-			fmt.Print("\n  Enter account label for file naming (optional, press Enter to skip): ")
-			reader := bufio.NewReader(os.Stdin)
-			var err error
-			email, err = reader.ReadString('\n')
-			if err != nil {
-				log.Debugf("Failed to read account label: %v", err)
-			}
-			email = strings.TrimSpace(email)
+		// Resolve provider: prefer CLI selection, fall back to callback's login_option
+		resolvedProvider := providerName
+		if resolvedProvider == "" {
+			resolvedProvider = callback.LoginOption
 		}
 
 		return &KiroTokenData{
@@ -465,25 +610,17 @@ func (c *SocialAuthClient) LoginWithSocial(ctx context.Context, provider SocialP
 			ProfileArn:   tokenResp.ProfileArn,
 			ExpiresAt:    expiresAt.Format(time.RFC3339),
 			AuthMethod:   "social",
-			Provider:     providerName,
-			Email:        email, // JWT email or user-provided label
+			Provider:     resolvedProvider,
+			Email:        email,
 			Region:       "us-east-1",
 		}, nil
 	}
 }
 
-// LoginWithSocialSelection prompts the user to choose between Google and GitHub.
+// LoginWithSocialSelection opens the Kiro signin page without pre-selecting a provider.
+// The user chooses between Google and GitHub in the browser.
 func (c *SocialAuthClient) LoginWithSocialSelection(ctx context.Context) (*KiroTokenData, error) {
-	options := []string{
-		"Login with Google",
-		"Login with GitHub",
-	}
-	selection := promptSelect("\n? Select login method:", options)
-
-	if selection == 1 {
-		return c.LoginWithSocial(ctx, ProviderGitHub)
-	}
-	return c.LoginWithSocial(ctx, ProviderGoogle)
+	return c.LoginWithSocial(ctx, "")
 }
 
 // LoginWithGoogle performs OAuth login with Google.
@@ -515,4 +652,20 @@ func forceDefaultProtocolHandler() {
 // Returns false in CI/automated environments or when stdin is piped.
 func isInteractiveTerminal() bool {
 	return term.IsTerminal(int(os.Stdin.Fd()))
+}
+
+// promptAccountLabel prompts the user for an account label when email cannot be auto-detected.
+// Only prompts in interactive terminal mode. Returns empty string if skipped or non-interactive.
+func promptAccountLabel() string {
+	if !isInteractiveTerminal() {
+		return ""
+	}
+	fmt.Print("\n  Enter account label for file naming (optional, press Enter to skip): ")
+	reader := bufio.NewReader(os.Stdin)
+	input, err := reader.ReadString('\n')
+	if err != nil {
+		log.Debugf("Failed to read account label: %v", err)
+		return ""
+	}
+	return strings.TrimSpace(input)
 }

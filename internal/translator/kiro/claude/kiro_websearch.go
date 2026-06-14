@@ -32,10 +32,11 @@ func SetWebSearchDescription(desc string) {
 
 // McpRequest represents a JSON-RPC 2.0 request to Kiro MCP API
 type McpRequest struct {
-	ID      string    `json:"id"`
-	JSONRPC string    `json:"jsonrpc"`
-	Method  string    `json:"method"`
-	Params  McpParams `json:"params"`
+	ProfileArn string    `json:"profileArn,omitempty"`
+	ID         string    `json:"id"`
+	JSONRPC    string    `json:"jsonrpc"`
+	Method     string    `json:"method"`
+	Params     McpParams `json:"params"`
 }
 
 // McpParams represents MCP request parameters
@@ -103,11 +104,15 @@ type WebSearchResult struct {
 	PublicDomain         *bool   `json:"publicDomain,omitempty"`
 }
 
-// isWebSearchTool checks if a tool name or type indicates a web_search tool.
-func isWebSearchTool(name, toolType string) bool {
+// IsWebSearchTool checks if a tool name or type indicates a web_search or web_fetch tool.
+func IsWebSearchTool(name, toolType string) bool {
 	return name == "web_search" ||
 		strings.HasPrefix(toolType, "web_search") ||
-		toolType == "web_search_20250305"
+		toolType == "web_search_20250305" ||
+		name == "web_fetch" ||
+		strings.HasPrefix(toolType, "web_fetch") ||
+		strings.HasPrefix(name, "web_fetch") ||
+		strings.HasPrefix(name, "web_search")
 }
 
 // HasWebSearchTool checks if the request contains ONLY a web_search tool.
@@ -131,7 +136,7 @@ func HasWebSearchTool(body []byte) bool {
 	name := strings.ToLower(tool.Get("name").String())
 	toolType := strings.ToLower(tool.Get("type").String())
 
-	return isWebSearchTool(name, toolType)
+	return IsWebSearchTool(name, toolType)
 }
 
 // ExtractSearchQuery extracts the search query from the request.
@@ -177,7 +182,7 @@ func generateRandomID8() string {
 // CreateMcpRequest creates an MCP request for web search.
 // Returns (toolUseID, McpRequest)
 // ID format: web_search_tooluse_{22 random}_{timestamp_millis}_{8 random}
-func CreateMcpRequest(query string) (string, *McpRequest) {
+func CreateMcpRequest(query string, profileArn string) (string, *McpRequest) {
 	random22 := GenerateToolUseID()
 	timestamp := time.Now().UnixMilli()
 	random8 := generateRandomID8()
@@ -188,18 +193,14 @@ func CreateMcpRequest(query string) (string, *McpRequest) {
 	toolUseID := "srvtoolu_" + strings.ReplaceAll(uuid.New().String(), "-", "")[:32]
 
 	request := &McpRequest{
-		ID:      requestID,
-		JSONRPC: "2.0",
-		Method:  "tools/call",
+		ProfileArn: profileArn,
+		ID:         requestID,
+		JSONRPC:    "2.0",
+		Method:     "tools/call",
 		Params: McpParams{
 			Name: "web_search",
 			Arguments: McpArguments{
 				Query: query,
-				Meta: &McpArgumentsMeta{
-					IsValid:        true,
-					ActivePath:     []string{"query"},
-					CompletedPaths: [][]string{{"query"}},
-				},
 			},
 		},
 	}
@@ -215,6 +216,9 @@ func GenerateToolUseID() string {
 // ReplaceWebSearchToolDescription replaces the web_search tool description with
 // a minimal version that allows re-search without the restrictive "do not search
 // non-coding topics" instruction from the original Kiro tools/list response.
+// ReplaceWebSearchToolDescription replaces the web_search tool description with
+// a minimal version that allows re-search without the restrictive "do not search
+// non-coding topics" instruction from the original Kiro tools/list response.
 // This keeps the tool available so the model can request additional searches.
 func ReplaceWebSearchToolDescription(body []byte) ([]byte, error) {
 	tools := gjson.GetBytes(body, "tools")
@@ -224,13 +228,13 @@ func ReplaceWebSearchToolDescription(body []byte) ([]byte, error) {
 
 	var updated []json.RawMessage
 	for _, tool := range tools.Array() {
-		name := strings.ToLower(tool.Get("name").String())
+		name := tool.Get("name").String()
 		toolType := strings.ToLower(tool.Get("type").String())
 
-		if isWebSearchTool(name, toolType) {
+		if IsWebSearchTool(strings.ToLower(name), toolType) {
 			// Replace with a minimal web_search tool definition
 			minimalTool := map[string]interface{}{
-				"name":        "web_search",
+				"name":        name,
 				"description": "Search the web for information. Use this when the previous search results are insufficient or when you need additional information on a different aspect of the query. Provide a refined or different search query.",
 				"input_schema": map[string]interface{}{
 					"type": "object",
@@ -306,15 +310,6 @@ func FormatToolResultText(results *WebSearchResults) string {
 	return text + string(resultJSON)
 }
 
-// InjectToolResultsClaude modifies a Claude-format JSON payload to append
-// tool_use (assistant) and tool_result (user) messages to the messages array.
-// BuildKiroPayload correctly translates:
-//   - assistant tool_use → KiroAssistantResponseMessage.toolUses
-//   - user tool_result   → KiroUserInputMessageContext.toolResults
-//
-// This produces the exact same GAR request format as the Kiro IDE (HAR captures).
-// IMPORTANT: The web_search tool must remain in the "tools" array for this to work.
-// Use ReplaceWebSearchToolDescription to keep the tool available with a minimal description.
 func InjectToolResultsClaude(claudePayload []byte, toolUseId, query string, results *WebSearchResults) ([]byte, error) {
 	var payload map[string]interface{}
 	if err := json.Unmarshal(claudePayload, &payload); err != nil {
@@ -323,6 +318,20 @@ func InjectToolResultsClaude(claudePayload []byte, toolUseId, query string, resu
 
 	messages, _ := payload["messages"].([]interface{})
 
+	// Find the actual web search / web fetch tool name in tools array
+	toolName := "web_search" // fallback
+	tools := gjson.GetBytes(claudePayload, "tools")
+	if tools.IsArray() {
+		for _, tool := range tools.Array() {
+			name := tool.Get("name").String()
+			toolType := tool.Get("type").String()
+			if IsWebSearchTool(strings.ToLower(name), strings.ToLower(toolType)) {
+				toolName = name
+				break
+			}
+		}
+	}
+
 	// 1. Append assistant message with tool_use (matches HAR: assistantResponseMessage.toolUses)
 	assistantMsg := map[string]interface{}{
 		"role": "assistant",
@@ -330,7 +339,7 @@ func InjectToolResultsClaude(claudePayload []byte, toolUseId, query string, resu
 			map[string]interface{}{
 				"type":  "tool_use",
 				"id":    toolUseId,
-				"name":  "web_search",
+				"name":  toolName,
 				"input": map[string]interface{}{"query": query},
 			},
 		},
@@ -413,7 +422,7 @@ func InjectSearchIndicatorsInResponse(responsePayload []byte, searches []SearchI
 		newContent = append(newContent, map[string]interface{}{
 			"type":  "server_tool_use",
 			"id":    s.ToolUseID,
-			"name":  "web_search",
+			"name":  s.ToolName,
 			"input": map[string]interface{}{"query": s.Query},
 		})
 
@@ -457,6 +466,7 @@ func InjectSearchIndicatorsInResponse(responsePayload []byte, searches []SearchI
 // SearchIndicator holds the data for one search operation to inject into a response.
 type SearchIndicator struct {
 	ToolUseID string
+	ToolName  string
 	Query     string
 	Results   *WebSearchResults
 }
@@ -464,7 +474,7 @@ type SearchIndicator struct {
 // BuildMcpEndpoint constructs the MCP endpoint URL for the given AWS region.
 // Centralizes the URL pattern used by both handleWebSearch and handleWebSearchStream.
 func BuildMcpEndpoint(region string) string {
-	return fmt.Sprintf("https://q.%s.amazonaws.com/mcp", region)
+	return fmt.Sprintf("https://q.%s.amazonaws.com/", region)
 }
 
 // ParseSearchResults extracts WebSearchResults from MCP response

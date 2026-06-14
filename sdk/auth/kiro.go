@@ -74,7 +74,8 @@ func (a *KiroAuthenticator) createAuthRecord(tokenData *kiroauth.KiroTokenData, 
 	seq := time.Now().UnixNano() % 100000
 
 	var label, idPart string
-	if tokenData.AuthMethod == "idc" {
+	switch tokenData.AuthMethod {
+	case "idc":
 		label = "kiro-idc"
 		// Priority: email > startUrl identifier > sequence only
 		// Email is unique, so no sequence needed when email is available
@@ -90,8 +91,21 @@ func (a *KiroAuthenticator) createAuthRecord(tokenData *kiroauth.KiroTokenData, 
 		} else {
 			idPart = fmt.Sprintf("%05d", seq)
 		}
-	} else {
-		label = fmt.Sprintf("kiro-%s", source)
+	case "builder-id":
+		label = "kiro-builder-id"
+		if tokenData.Email != "" {
+			idPart = kiroauth.SanitizeEmailForFilename(tokenData.Email)
+		} else {
+			idPart = fmt.Sprintf("%05d", seq)
+		}
+	default:
+		// For social auth, include provider (google/github) in the label
+		provider := strings.ToLower(tokenData.Provider)
+		if provider != "" {
+			label = fmt.Sprintf("kiro-%s-%s", source, provider)
+		} else {
+			label = fmt.Sprintf("kiro-%s", source)
+		}
 		idPart = extractKiroIdentifier(tokenData.Email, tokenData.ProfileArn, tokenData.ClientID)
 	}
 

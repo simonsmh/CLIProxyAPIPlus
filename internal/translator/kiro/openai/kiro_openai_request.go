@@ -634,13 +634,6 @@ func buildAssistantMessageFromOpenAI(msg gjson.Result) KiroAssistantResponseMess
 			switch partType {
 			case "text":
 				contentBuilder.WriteString(part.Get("text").String())
-			case "thinking", "reasoning":
-				// Replayed reasoning from a prior turn (Anthropic-style
-				// thinking block, or OpenAI o1-style reasoning content).
-				// Q has no separate reasoning channel for *history*, so
-				// we fold the text into assistant content rather than
-				// drop it on the floor.
-				contentBuilder.WriteString(thinking.GetThinkingText(part))
 			case "tool_use":
 				// Handle tool_use in content array (Anthropic/OpenCode format)
 				// This is different from OpenAI's tool_calls format

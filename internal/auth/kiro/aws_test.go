@@ -228,7 +228,7 @@ func TestGenerateTokenFileName(t *testing.T) {
 				Email:      "user@example.com",
 				StartURL:   "https://d-1234567890.awsapps.com/start",
 			},
-			exact: "kiro-idc-user-example-com.json",
+			exact: "kiro-idc-user@example.com.json",
 		},
 		{
 			name: "IDC without email but with startUrl",
@@ -264,7 +264,7 @@ func TestGenerateTokenFileName(t *testing.T) {
 				Email:      "user@gmail.com",
 				StartURL:   "https://view.awsapps.com/start",
 			},
-			exact: "kiro-builder-id-user-gmail-com.json",
+			exact: "kiro-builder-id-user@gmail.com.json",
 		},
 		{
 			name: "Builder ID without email",
@@ -276,12 +276,40 @@ func TestGenerateTokenFileName(t *testing.T) {
 			prefix: "kiro-builder-id-",
 		},
 		{
-			name: "Social auth with email",
+			name: "Social auth with email (Google)",
 			tokenData: &KiroTokenData{
-				AuthMethod: "google",
+				AuthMethod: "social",
+				Provider:   "Google",
 				Email:      "user@gmail.com",
 			},
-			exact: "kiro-google-user-gmail-com.json",
+			exact: "kiro-social-google-user@gmail.com.json",
+		},
+		{
+			name: "Social auth with email (GitHub)",
+			tokenData: &KiroTokenData{
+				AuthMethod: "social",
+				Provider:   "Github",
+				Email:      "user@gmail.com",
+			},
+			exact: "kiro-social-github-user@gmail.com.json",
+		},
+		{
+			name: "Social auth without provider",
+			tokenData: &KiroTokenData{
+				AuthMethod: "social",
+				Provider:   "",
+				Email:      "user@gmail.com",
+			},
+			exact: "kiro-social-user@gmail.com.json",
+		},
+		{
+			name: "Social auth without email (Google)",
+			tokenData: &KiroTokenData{
+				AuthMethod: "social",
+				Provider:   "Google",
+				Email:      "",
+			},
+			prefix: "kiro-social-google-",
 		},
 		{
 			name: "Empty auth method",
@@ -298,7 +326,7 @@ func TestGenerateTokenFileName(t *testing.T) {
 				Email:      "user.name+tag@sub.example.com",
 				StartURL:   "https://d-1234567890.awsapps.com/start",
 			},
-			exact: "kiro-idc-user-name+tag-sub-example-com.json",
+			exact: "kiro-idc-user.name+tag@sub.example.com.json",
 		},
 	}
 

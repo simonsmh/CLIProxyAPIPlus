@@ -2613,7 +2613,7 @@ func (s *Service) extractKiroTokenData(a *coreauth.Auth) *kiroauth.KiroTokenData
 		return nil
 	}
 
-	var accessToken, profileArn, refreshToken, authMethod string
+	var accessToken, profileArn, refreshToken, authMethod, region string
 
 	// Priority 1: Try to get from Attributes (config.yaml source)
 	if a.Attributes != nil {
@@ -2621,6 +2621,7 @@ func (s *Service) extractKiroTokenData(a *coreauth.Auth) *kiroauth.KiroTokenData
 		profileArn = strings.TrimSpace(a.Attributes["profile_arn"])
 		refreshToken = strings.TrimSpace(a.Attributes["refresh_token"])
 		authMethod = strings.TrimSpace(a.Attributes["auth_method"])
+		region = strings.TrimSpace(a.Attributes["region"])
 	}
 
 	// Priority 2: If not found in Attributes, try Metadata (JSON file source)
@@ -2637,6 +2638,9 @@ func (s *Service) extractKiroTokenData(a *coreauth.Auth) *kiroauth.KiroTokenData
 		if am, ok := a.Metadata["auth_method"].(string); ok {
 			authMethod = strings.TrimSpace(am)
 		}
+		if r, ok := a.Metadata["region"].(string); ok {
+			region = strings.TrimSpace(r)
+		}
 	}
 
 	// access_token is required
@@ -2644,10 +2648,10 @@ func (s *Service) extractKiroTokenData(a *coreauth.Auth) *kiroauth.KiroTokenData
 		return nil
 	}
 
-	// Fallback to AWS Builder ID default profile ARN if empty
+	// Fallback to AWS Builder ID shared profile ARN if empty
 	if profileArn == "" {
-		profileArn = "arn:aws:codewhisperer:us-east-1:000000000000:profile/000000000000"
-		log.Debug("kiro: empty profileArn, defaulting to AWS Builder ID profile ARN")
+		profileArn = kiroauth.DefaultBuilderIDProfileArn
+		log.Debug("kiro: empty profileArn, defaulting to AWS Builder ID shared profile ARN")
 	}
 
 	return &kiroauth.KiroTokenData{
@@ -2655,6 +2659,7 @@ func (s *Service) extractKiroTokenData(a *coreauth.Auth) *kiroauth.KiroTokenData
 		ProfileArn:   profileArn,
 		RefreshToken: refreshToken,
 		AuthMethod:   authMethod,
+		Region:       region,
 	}
 }
 

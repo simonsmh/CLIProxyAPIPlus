@@ -525,14 +525,6 @@ func BuildAssistantMessageStruct(msg gjson.Result) KiroAssistantResponseMessage 
 			switch partType {
 			case "text":
 				contentBuilder.WriteString(part.Get("text").String())
-			case "thinking":
-				// Replayed reasoning from a prior turn. Q has no separate
-				// reasoning channel for *history* (live reasoning comes back
-				// as reasoningContentEvent, not in the message body), so we
-				// fold the text into assistant content. Without this, multi-
-				// turn sessions where the client echoes back prior thinking
-				// blocks lose the model's earlier reasoning entirely.
-				contentBuilder.WriteString(thinking.GetThinkingText(part))
 			case "tool_use":
 				toolUseID := part.Get("id").String()
 				toolName := part.Get("name").String()

@@ -3,6 +3,7 @@
 package kiro
 
 import (
+	"bytes"
 	"context"
 	"encoding/json"
 	"fmt"
@@ -19,8 +20,7 @@ import (
 )
 
 const (
-	pathGetUsageLimits      = "getUsageLimits"
-	pathListAvailableModels = "ListAvailableModels"
+	pathGetUsageLimits = "getUsageLimits"
 )
 
 // KiroAuth handles AWS CodeWhisperer authentication and API communication.
@@ -101,47 +101,21 @@ func (k *KiroAuth) IsTokenExpired(tokenData *KiroTokenData) bool {
 	return time.Now().After(expiresAt)
 }
 
-// makeRequest sends a REST-style GET request to the CodeWhisperer API.
-//
-// Parameters:
-//   - ctx: The context for the request
-//   - path: The API path (e.g., "getUsageLimits")
-//   - tokenData: The token data containing access token, refresh token, and profile ARN
-//   - queryParams: Query parameters to add to the URL
-//
-// Returns:
-//   - []byte: The response body
-//   - error: An error if the request fails
+// makeRequest sends a GET request to the CodeWhisperer management API with query parameters.
+// This is used for REST-style endpoints like getUsageLimits.
 func (k *KiroAuth) makeRequest(ctx context.Context, path string, tokenData *KiroTokenData, queryParams map[string]string) ([]byte, error) {
-	// Get endpoint from profileArn (defaults to us-east-1 if empty)
+	var endpoint string
 	profileArn := queryParams["profileArn"]
-	endpoint := GetKiroAPIEndpointFromProfileArn(profileArn)
-
-	var req *http.Request
-	var err error
-
-	if path == pathListAvailableModels {
-		url := endpoint + "/"
-		bodyData := map[string]string{
-			"origin":     "KIRO_CLI",
-			"profileArn": profileArn,
-		}
-		jsonBytes, marshalErr := json.Marshal(bodyData)
-		if marshalErr != nil {
-			return nil, fmt.Errorf("failed to marshal request: %w", marshalErr)
-		}
-		req, err = http.NewRequestWithContext(ctx, http.MethodPost, url, strings.NewReader(string(jsonBytes)))
-		if err != nil {
-			return nil, fmt.Errorf("failed to create request: %w", err)
-		}
-		req.Header.Set("Content-Type", "application/json")
-		req.Header.Set("X-Amz-Target", "AmazonCodeWhispererService.ListAvailableModels")
+	if tokenData.Region != "" {
+		endpoint = GetKiroAPIEndpoint(ResolveKiroAPIRegion(tokenData.Region))
 	} else {
-		url := buildURL(endpoint, path, queryParams)
-		req, err = http.NewRequestWithContext(ctx, http.MethodGet, url, nil)
-		if err != nil {
-			return nil, fmt.Errorf("failed to create request: %w", err)
-		}
+		endpoint = GetKiroAPIEndpointFromProfileArn(profileArn)
+	}
+
+	requestURL := buildURL(endpoint, path, queryParams)
+	req, err := http.NewRequestWithContext(ctx, http.MethodGet, requestURL, nil)
+	if err != nil {
+		return nil, fmt.Errorf("failed to create request: %w", err)
 	}
 
 	accountKey := GetAccountKey(tokenData.ClientID, tokenData.RefreshToken)
@@ -219,28 +193,69 @@ func (k *KiroAuth) GetUsageLimits(ctx context.Context, tokenData *KiroTokenData)
 	return usage, nil
 }
 
-// ListAvailableModels retrieves available models from the CodeWhisperer API.
-// This method fetches the list of AI models available for the authenticated user.
-//
-// Parameters:
-//   - ctx: The context for the request
-//   - tokenData: The token data containing access token and profile ARN
-//
-// Returns:
-//   - []*KiroModel: The list of available models
-//   - error: An error if the request fails
+// ListAvailableModels retrieves available models from the CodeWhisperer API via the
+// management endpoint using POST + JSON body (Amazon JSON-RPC protocol), matching
+// the pi-provider-kiro dev branch implementation.
 func (k *KiroAuth) ListAvailableModels(ctx context.Context, tokenData *KiroTokenData) ([]*KiroModel, error) {
-	if tokenData == nil || tokenData.ProfileArn == "" {
-		return nil, fmt.Errorf("profile ARN is empty")
-	}
-	queryParams := map[string]string{
-		"origin":     "AI_EDITOR",
-		"profileArn": tokenData.ProfileArn,
+	if tokenData == nil {
+		return nil, fmt.Errorf("token data is nil")
 	}
 
-	body, err := k.makeRequest(ctx, pathListAvailableModels, tokenData, queryParams)
+	// Resolve API region from token's region or profileArn
+	var apiRegion string
+	if tokenData.Region != "" {
+		apiRegion = ResolveKiroAPIRegion(tokenData.Region)
+	} else {
+		apiRegion = ExtractRegionFromProfileArn(tokenData.ProfileArn)
+		if apiRegion == "" {
+			apiRegion = DefaultKiroRegion
+		}
+	}
+	endpoint := GetKiroAPIEndpoint(apiRegion)
+
+	// Build request body (JSON-RPC style, matching pi-provider-kiro)
+	bodyMap := map[string]string{
+		"origin": "KIRO_CLI",
+	}
+	if tokenData.ProfileArn != "" {
+		bodyMap["profileArn"] = tokenData.ProfileArn
+	}
+
+	bodyBytes, err := json.Marshal(bodyMap)
 	if err != nil {
-		return nil, err
+		return nil, fmt.Errorf("failed to marshal request body: %w", err)
+	}
+
+	// POST to management endpoint with X-Amz-Target header (Amazon JSON-RPC protocol)
+	req, err := http.NewRequestWithContext(ctx, http.MethodPost, endpoint+"/", bytes.NewReader(bodyBytes))
+	if err != nil {
+		return nil, fmt.Errorf("failed to create request: %w", err)
+	}
+
+	req.Header.Set("Content-Type", "application/x-amz-json-1.0")
+	req.Header.Set("X-Amz-Target", "AmazonCodeWhispererService.ListAvailableModels")
+	// Use setRuntimeHeaders (same as getUsageLimits) which adds Authorization + runtime headers
+	// (x-amz-user-agent, User-Agent, amz-sdk-invocation-id, amz-sdk-request)
+	accountKey := GetAccountKey(tokenData.ClientID, tokenData.RefreshToken)
+	setRuntimeHeaders(req, tokenData.AccessToken, accountKey)
+
+	resp, err := k.httpClient.Do(req)
+	if err != nil {
+		return nil, fmt.Errorf("request failed: %w", err)
+	}
+	defer func() {
+		if errClose := resp.Body.Close(); errClose != nil {
+			log.Errorf("failed to close response body: %v", errClose)
+		}
+	}()
+
+	body, err := io.ReadAll(resp.Body)
+	if err != nil {
+		return nil, fmt.Errorf("failed to read response: %w", err)
+	}
+
+	if resp.StatusCode != http.StatusOK {
+		return nil, fmt.Errorf("ListAvailableModels API error (status %d): %s", resp.StatusCode, string(body))
 	}
 
 	var result struct {

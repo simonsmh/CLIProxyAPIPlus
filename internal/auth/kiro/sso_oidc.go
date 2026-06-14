@@ -457,6 +457,8 @@ func (c *SSOOIDCClient) LoginWithIDC(ctx context.Context, startURL, region strin
 			email := FetchUserEmailWithFallback(ctx, c.cfg, tokenResp.AccessToken, regResp.ClientID, tokenResp.RefreshToken)
 			if email != "" {
 				fmt.Printf("  Logged in as: %s\n", email)
+			} else {
+				email = promptAccountLabel()
 			}
 
 			expiresAt := time.Now().Add(time.Duration(tokenResp.ExpiresIn) * time.Second)
@@ -862,6 +864,8 @@ func (c *SSOOIDCClient) LoginWithBuilderID(ctx context.Context) (*KiroTokenData,
 			email := FetchUserEmailWithFallback(ctx, c.cfg, tokenResp.AccessToken, regResp.ClientID, tokenResp.RefreshToken)
 			if email != "" {
 				fmt.Printf("  Logged in as: %s\n", email)
+			} else {
+				email = promptAccountLabel()
 			}
 
 			expiresAt := time.Now().Add(time.Duration(tokenResp.ExpiresIn) * time.Second)
@@ -869,7 +873,7 @@ func (c *SSOOIDCClient) LoginWithBuilderID(ctx context.Context) (*KiroTokenData,
 			return &KiroTokenData{
 				AccessToken:  tokenResp.AccessToken,
 				RefreshToken: tokenResp.RefreshToken,
-				ProfileArn:   "arn:aws:codewhisperer:us-east-1:000000000000:profile/000000000000", // Default Builder ID profile
+				ProfileArn:   c.fetchProfileArnForBuilderID(ctx, tokenResp.AccessToken, regResp.ClientID, tokenResp.RefreshToken, defaultIDCRegion),
 				ExpiresAt:    expiresAt.Format(time.RFC3339),
 				AuthMethod:   "builder-id",
 				Provider:     "AWS",
@@ -950,6 +954,20 @@ func (c *SSOOIDCClient) tryUserInfoEndpoint(ctx context.Context, accessToken str
 	return ""
 }
 
+// fetchProfileArnForBuilderID attempts to discover the real profile ARN for a Builder ID token.
+// It calls FetchProfileArn (which tries ListAvailableProfiles, GetProfile, and legacy ListProfiles)
+// and falls back to DefaultBuilderIDProfileArn if all methods return empty.
+func (c *SSOOIDCClient) fetchProfileArnForBuilderID(ctx context.Context, accessToken, clientID, refreshToken, region string) string {
+	log.Debugf("Fetching profile ARN for Builder ID token (region=%s)", region)
+	profileArn := c.FetchProfileArn(ctx, accessToken, clientID, refreshToken, region)
+	if profileArn != "" {
+		log.Debugf("Found real profile ARN for Builder ID: %s", profileArn)
+		return profileArn
+	}
+	log.Debugf("No real profile ARN found for Builder ID, falling back to default")
+	return DefaultBuilderIDProfileArn
+}
+
 // FetchProfileArn fetches the profile ARN from ListAvailableProfiles API.
 // This is used to get profileArn for imported accounts that may not have it.
 func (c *SSOOIDCClient) FetchProfileArn(ctx context.Context, accessToken, clientID, refreshToken, region string) string {
@@ -957,16 +975,77 @@ func (c *SSOOIDCClient) FetchProfileArn(ctx context.Context, accessToken, client
 	if profileArn != "" {
 		return profileArn
 	}
-	return c.tryListProfilesLegacy(ctx, accessToken, region)
+
+	profileArn = c.tryListProfilesLegacy(ctx, accessToken, region)
+	if profileArn != "" {
+		return profileArn
+	}
+
+	// Fallback: GetProfile API returns the caller's own profile when authenticated.
+	// This works for Builder ID and IDC tokens where ListAvailableProfiles returns empty.
+	return c.tryGetProfile(ctx, accessToken, clientID, refreshToken, region)
 }
 
-func (c *SSOOIDCClient) tryListAvailableProfiles(ctx context.Context, accessToken, clientID, refreshToken, region string) string {
-	req, err := http.NewRequestWithContext(ctx, http.MethodPost, GetKiroAPIEndpoint(region)+"/ListAvailableProfiles", strings.NewReader("{}"))
+// tryGetProfile calls the GetProfile API to discover the profile ARN for the authenticated token.
+// This is the same approach used by the Kiro IDE and pi-provider-kiro for Builder ID tokens.
+func (c *SSOOIDCClient) tryGetProfile(ctx context.Context, accessToken, clientID, refreshToken, region string) string {
+	apiRegion := ResolveKiroAPIRegion(region)
+	endpoint := GetKiroAPIEndpoint(apiRegion)
+
+	req, err := http.NewRequestWithContext(ctx, http.MethodPost, endpoint+"/", strings.NewReader("{}"))
 	if err != nil {
 		return ""
 	}
 
-	req.Header.Set("Content-Type", "application/json")
+	req.Header.Set("Content-Type", "application/x-amz-json-1.0")
+	req.Header.Set("X-Amz-Target", "AmazonCodeWhispererService.GetProfile")
+	accountKey := GetAccountKey(clientID, refreshToken)
+	setRuntimeHeaders(req, accessToken, accountKey)
+
+	resp, err := c.httpClient.Do(req)
+	if err != nil {
+		log.Debugf("GetProfile request failed: %v", err)
+		return ""
+	}
+	defer resp.Body.Close()
+
+	respBody, _ := io.ReadAll(resp.Body)
+
+	log.Debugf("GetProfile response (status %d): %s", resp.StatusCode, string(respBody))
+
+	if resp.StatusCode != http.StatusOK {
+		log.Debugf("GetProfile failed (status %d): %s", resp.StatusCode, string(respBody))
+		return ""
+	}
+
+	var result struct {
+		Profile struct {
+			Arn string `json:"arn"`
+		} `json:"profile"`
+	}
+
+	if err := json.Unmarshal(respBody, &result); err != nil {
+		log.Debugf("GetProfile parse error: %v", err)
+		return ""
+	}
+
+	if result.Profile.Arn != "" {
+		log.Debugf("GetProfile returned profile ARN: %s", result.Profile.Arn)
+		return result.Profile.Arn
+	}
+
+	return ""
+}
+
+func (c *SSOOIDCClient) tryListAvailableProfiles(ctx context.Context, accessToken, clientID, refreshToken, region string) string {
+	apiRegion := ResolveKiroAPIRegion(region)
+	req, err := http.NewRequestWithContext(ctx, http.MethodPost, GetKiroAPIEndpoint(apiRegion)+"/", strings.NewReader("{}"))
+	if err != nil {
+		return ""
+	}
+
+	req.Header.Set("Content-Type", "application/x-amz-json-1.0")
+	req.Header.Set("X-Amz-Target", "AmazonCodeWhispererService.ListAvailableProfiles")
 	accountKey := GetAccountKey(clientID, refreshToken)
 	setRuntimeHeaders(req, accessToken, accountKey)
 
@@ -978,6 +1057,8 @@ func (c *SSOOIDCClient) tryListAvailableProfiles(ctx context.Context, accessToke
 	defer resp.Body.Close()
 
 	respBody, _ := io.ReadAll(resp.Body)
+
+	log.Debugf("ListAvailableProfiles response (status %d): %s", resp.StatusCode, string(respBody))
 
 	if resp.StatusCode != http.StatusOK {
 		log.Debugf("ListAvailableProfiles failed (status %d)", resp.StatusCode)
@@ -1460,6 +1541,8 @@ func (c *SSOOIDCClient) LoginWithBuilderIDAuthCode(ctx context.Context) (*KiroTo
 		email := FetchUserEmailWithFallback(ctx, c.cfg, tokenResp.AccessToken, regResp.ClientID, tokenResp.RefreshToken)
 		if email != "" {
 			fmt.Printf("  Logged in as: %s\n", email)
+		} else {
+			email = promptAccountLabel()
 		}
 
 		expiresAt := time.Now().Add(time.Duration(tokenResp.ExpiresIn) * time.Second)
@@ -1467,7 +1550,7 @@ func (c *SSOOIDCClient) LoginWithBuilderIDAuthCode(ctx context.Context) (*KiroTo
 		return &KiroTokenData{
 			AccessToken:  tokenResp.AccessToken,
 			RefreshToken: tokenResp.RefreshToken,
-			ProfileArn:   "arn:aws:codewhisperer:us-east-1:000000000000:profile/000000000000", // Default Builder ID profile
+			ProfileArn:   c.fetchProfileArnForBuilderID(ctx, tokenResp.AccessToken, regResp.ClientID, tokenResp.RefreshToken, defaultIDCRegion),
 			ExpiresAt:    expiresAt.Format(time.RFC3339),
 			AuthMethod:   "builder-id",
 			Provider:     "AWS",
@@ -1570,6 +1653,8 @@ func (c *SSOOIDCClient) LoginWithIDCAuthCode(ctx context.Context, startURL, regi
 		email := FetchUserEmailWithFallback(ctx, c.cfg, tokenResp.AccessToken, regResp.ClientID, tokenResp.RefreshToken)
 		if email != "" {
 			fmt.Printf("  Logged in as: %s\n", email)
+		} else {
+			email = promptAccountLabel()
 		}
 
 		expiresAt := time.Now().Add(time.Duration(tokenResp.ExpiresIn) * time.Second)
