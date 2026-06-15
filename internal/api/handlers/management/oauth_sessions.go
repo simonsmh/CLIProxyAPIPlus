@@ -333,9 +333,10 @@ func NormalizeOAuthProvider(provider string) (string, error) {
 }
 
 type oauthCallbackFilePayload struct {
-	Code  string `json:"code"`
-	State string `json:"state"`
-	Error string `json:"error"`
+	Code        string `json:"code"`
+	State       string `json:"state"`
+	Error       string `json:"error"`
+	LoginOption string `json:"login_option,omitempty"`
 }
 
 func WriteOAuthCallbackFile(authDir, provider, state, code, errorMessage string) (string, error) {

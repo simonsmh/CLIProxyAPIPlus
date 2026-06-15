@@ -576,11 +576,39 @@ func (s *Server) setupRoutes() {
 		code := c.Query("code")
 		state := c.Query("state")
 		errStr := c.Query("error")
+		loginOption := c.Query("login_option")
+		issuerURL := c.Query("issuer_url")
+		idcRegion := c.Query("idc_region")
 		if errStr == "" {
 			errStr = c.Query("error_description")
 		}
 		if state != "" {
-			_, _ = managementHandlers.WriteOAuthCallbackFileForPendingSession(s.cfg.AuthDir, "kiro", state, code, errStr)
+			path, _ := managementHandlers.WriteOAuthCallbackFileForPendingSession(s.cfg.AuthDir, "kiro", state, code, errStr)
+			if path != "" {
+				extraFields := map[string]string{}
+				if loginOption != "" {
+					extraFields["login_option"] = loginOption
+				}
+				if issuerURL != "" {
+					extraFields["issuer_url"] = issuerURL
+				}
+				if idcRegion != "" {
+					extraFields["idc_region"] = idcRegion
+				}
+				if len(extraFields) > 0 {
+					if data, err := os.ReadFile(path); err == nil {
+						var payload map[string]string
+						if json.Unmarshal(data, &payload) == nil {
+							for k, v := range extraFields {
+								payload[k] = v
+							}
+							if updated, err := json.Marshal(payload); err == nil {
+								_ = os.WriteFile(path, updated, 0o600)
+							}
+						}
+					}
+				}
+			}
 		}
 		c.Header("Content-Type", "text/html; charset=utf-8")
 		c.String(http.StatusOK, oauthCallbackSuccessHTML)
