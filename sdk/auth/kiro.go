@@ -2,44 +2,14 @@ package auth
 
 import (
 	"context"
-	"encoding/json"
 	"fmt"
 	"os"
-	"path/filepath"
-	"strings"
 	"time"
 
 	kiroauth "github.com/router-for-me/CLIProxyAPI/v7/internal/auth/kiro"
 	"github.com/router-for-me/CLIProxyAPI/v7/internal/config"
 	coreauth "github.com/router-for-me/CLIProxyAPI/v7/sdk/cliproxy/auth"
 )
-
-// extractKiroIdentifier extracts a meaningful identifier for file naming.
-// Returns account name if provided, otherwise profile ARN ID, then client ID.
-// All extracted values are sanitized to prevent path injection attacks.
-func extractKiroIdentifier(accountName, profileArn, clientID string) string {
-	// Priority 1: Use account name if provided
-	if accountName != "" {
-		return kiroauth.SanitizeEmailForFilename(accountName)
-	}
-
-	// Priority 2: Use profile ARN ID part (sanitized to prevent path injection)
-	if profileArn != "" {
-		parts := strings.Split(profileArn, "/")
-		if len(parts) >= 2 {
-			// Sanitize the ARN component to prevent path traversal
-			return kiroauth.SanitizeEmailForFilename(parts[len(parts)-1])
-		}
-	}
-
-	// Priority 3: Use client ID (for IDC auth without email/profileArn)
-	if clientID != "" {
-		return kiroauth.SanitizeEmailForFilename(clientID)
-	}
-
-	// Fallback: timestamp
-	return fmt.Sprintf("%d", time.Now().UnixNano()%100000)
-}
 
 // KiroAuthenticator implements OAuth authentication for Kiro with Google login.
 type KiroAuthenticator struct{}
@@ -61,56 +31,35 @@ func (a *KiroAuthenticator) RefreshLead() *time.Duration {
 	return &d
 }
 
+// CreateAuthRecord creates an auth record from token data.
+// This is the canonical way to build a coreauth.Auth from KiroTokenData.
+func CreateAuthRecord(tokenData *kiroauth.KiroTokenData, source string) (*coreauth.Auth, error) {
+	return createAuthRecord(tokenData, source)
+}
+
 // createAuthRecord creates an auth record from token data.
-func (a *KiroAuthenticator) createAuthRecord(tokenData *kiroauth.KiroTokenData, source string) (*coreauth.Auth, error) {
+func createAuthRecord(tokenData *kiroauth.KiroTokenData, source string) (*coreauth.Auth, error) {
 	// Parse expires_at
 	expiresAt, err := time.Parse(time.RFC3339, tokenData.ExpiresAt)
 	if err != nil {
 		expiresAt = time.Now().Add(1 * time.Hour)
 	}
 
-	// Determine label and identifier based on auth method
-	// Generate sequence number for uniqueness
-	seq := time.Now().UnixNano() % 100000
-
-	var label, idPart string
+	// Determine label based on auth method
+	var label string
 	switch tokenData.AuthMethod {
 	case "idc":
 		label = "kiro-idc"
-		// Priority: email > startUrl identifier > sequence only
-		// Email is unique, so no sequence needed when email is available
-		if tokenData.Email != "" {
-			idPart = kiroauth.SanitizeEmailForFilename(tokenData.Email)
-		} else if tokenData.StartURL != "" {
-			identifier := kiroauth.ExtractIDCIdentifier(tokenData.StartURL)
-			if identifier != "" {
-				idPart = fmt.Sprintf("%s-%05d", identifier, seq)
-			} else {
-				idPart = fmt.Sprintf("%05d", seq)
-			}
-		} else {
-			idPart = fmt.Sprintf("%05d", seq)
-		}
 	case "builder-id":
-		label = "kiro-builder-id"
-		if tokenData.Email != "" {
-			idPart = kiroauth.SanitizeEmailForFilename(tokenData.Email)
-		} else {
-			idPart = fmt.Sprintf("%05d", seq)
-		}
+		label = "kiro-aws"
 	default:
-		// For social auth, include provider (google/github) in the label
-		provider := strings.ToLower(tokenData.Provider)
-		if provider != "" {
-			label = fmt.Sprintf("kiro-%s-%s", source, provider)
-		} else {
-			label = fmt.Sprintf("kiro-%s", source)
-		}
-		idPart = extractKiroIdentifier(tokenData.Email, tokenData.ProfileArn, tokenData.ClientID)
+		label = fmt.Sprintf("kiro-%s", source)
 	}
 
+	// Use canonical filename generation
+	fileName := kiroauth.GenerateTokenFileName(tokenData)
+
 	now := time.Now()
-	fileName := fmt.Sprintf("%s-%s.json", label, idPart)
 
 	metadata := map[string]any{
 		"type":          "kiro",
@@ -123,6 +72,7 @@ func (a *KiroAuthenticator) createAuthRecord(tokenData *kiroauth.KiroTokenData, 
 		"client_id":     tokenData.ClientID,
 		"client_secret": tokenData.ClientSecret,
 		"email":         tokenData.Email,
+		"last_refresh":  now.Format(time.RFC3339),
 	}
 
 	// Add IDC-specific fields if present
@@ -151,16 +101,15 @@ func (a *KiroAuthenticator) createAuthRecord(tokenData *kiroauth.KiroTokenData, 
 	}
 
 	record := &coreauth.Auth{
-		ID:         fileName,
-		Provider:   "kiro",
-		FileName:   fileName,
-		Label:      label,
-		Status:     coreauth.StatusActive,
-		CreatedAt:  now,
-		UpdatedAt:  now,
-		Metadata:   metadata,
-		Attributes: attributes,
-		// NextRefreshAfter: 20 minutes before expiry
+		ID:               fileName,
+		Provider:         "kiro",
+		FileName:         fileName,
+		Label:            label,
+		Status:           coreauth.StatusActive,
+		CreatedAt:        now,
+		UpdatedAt:        now,
+		Metadata:         metadata,
+		Attributes:       attributes,
 		NextRefreshAfter: expiresAt.Add(-20 * time.Minute),
 	}
 
@@ -199,7 +148,7 @@ func (a *KiroAuthenticator) Login(ctx context.Context, cfg *config.Config, opts 
 		return nil, fmt.Errorf("login failed: %w", err)
 	}
 
-	return a.createAuthRecord(tokenData, "aws")
+	return createAuthRecord(tokenData, "aws")
 }
 
 // LoginWithAuthCode performs OAuth login for Kiro with AWS Builder ID using authorization code flow.
@@ -217,53 +166,12 @@ func (a *KiroAuthenticator) LoginWithAuthCode(ctx context.Context, cfg *config.C
 		return nil, fmt.Errorf("login failed: %w", err)
 	}
 
-	// Parse expires_at
-	expiresAt, err := time.Parse(time.RFC3339, tokenData.ExpiresAt)
-	if err != nil {
-		expiresAt = time.Now().Add(1 * time.Hour)
+	record, errRecord := createAuthRecord(tokenData, "aws")
+	if errRecord != nil {
+		return nil, errRecord
 	}
-
-	// Extract identifier for file naming
-	idPart := extractKiroIdentifier(tokenData.Email, tokenData.ProfileArn, tokenData.ClientID)
-
-	now := time.Now()
-	fileName := fmt.Sprintf("kiro-aws-%s.json", idPart)
-
-	record := &coreauth.Auth{
-		ID:        fileName,
-		Provider:  "kiro",
-		FileName:  fileName,
-		Label:     "kiro-aws",
-		Status:    coreauth.StatusActive,
-		CreatedAt: now,
-		UpdatedAt: now,
-		Metadata: map[string]any{
-			"type":          "kiro",
-			"access_token":  tokenData.AccessToken,
-			"refresh_token": tokenData.RefreshToken,
-			"profile_arn":   tokenData.ProfileArn,
-			"expires_at":    tokenData.ExpiresAt,
-			"auth_method":   tokenData.AuthMethod,
-			"provider":      tokenData.Provider,
-			"client_id":     tokenData.ClientID,
-			"client_secret": tokenData.ClientSecret,
-			"email":         tokenData.Email,
-		},
-		Attributes: map[string]string{
-			"profile_arn": tokenData.ProfileArn,
-			"source":      "aws-builder-id-authcode",
-			"email":       tokenData.Email,
-		},
-		// NextRefreshAfter: 20 minutes before expiry
-		NextRefreshAfter: expiresAt.Add(-20 * time.Minute),
-	}
-
-	if tokenData.Email != "" {
-		fmt.Printf("\n✓ Kiro authentication completed successfully! (Account: %s)\n", tokenData.Email)
-	} else {
-		fmt.Println("\n✓ Kiro authentication completed successfully!")
-	}
-
+	// Override source attribute for auth code flow
+	record.Attributes["source"] = "aws-builder-id-authcode"
 	return record, nil
 }
 
@@ -278,7 +186,7 @@ func (a *KiroAuthenticator) LoginWithSocialSelection(ctx context.Context, cfg *c
 	if err != nil {
 		return nil, err
 	}
-	return a.createAuthRecord(tokenData, "social")
+	return createAuthRecord(tokenData, "social")
 }
 
 // ImportFromKiroIDE imports token from Kiro IDE's token file.
@@ -288,60 +196,24 @@ func (a *KiroAuthenticator) ImportFromKiroIDE(ctx context.Context, cfg *config.C
 		return nil, fmt.Errorf("failed to load Kiro IDE token: %w", err)
 	}
 
-	// Parse expires_at
-	expiresAt, err := time.Parse(time.RFC3339, tokenData.ExpiresAt)
-	if err != nil {
-		expiresAt = time.Now().Add(1 * time.Hour)
-	}
-
 	// Extract email from JWT if not already set (for imported tokens)
 	if tokenData.Email == "" {
 		tokenData.Email = kiroauth.ExtractEmailFromJWT(tokenData.AccessToken)
 	}
 
-	// Extract identifier for file naming
-	idPart := extractKiroIdentifier(tokenData.Email, tokenData.ProfileArn, tokenData.ClientID)
-	// Sanitize provider to prevent path traversal (defense-in-depth)
-	provider := kiroauth.SanitizeEmailForFilename(strings.ToLower(strings.TrimSpace(tokenData.Provider)))
-	if provider == "" {
-		provider = "imported" // Fallback for legacy tokens without provider
+	record, errRecord := createAuthRecord(tokenData, "imported")
+	if errRecord != nil {
+		return nil, errRecord
 	}
 
-	now := time.Now()
-	fileName := fmt.Sprintf("kiro-%s-%s.json", provider, idPart)
+	// Override source attribute for IDE import
+	record.Attributes["source"] = "kiro-ide-import"
+	record.Attributes["region"] = tokenData.Region
 
-	record := &coreauth.Auth{
-		ID:        fileName,
-		Provider:  "kiro",
-		FileName:  fileName,
-		Label:     fmt.Sprintf("kiro-%s", provider),
-		Status:    coreauth.StatusActive,
-		CreatedAt: now,
-		UpdatedAt: now,
-		Metadata: map[string]any{
-			"type":           "kiro",
-			"access_token":   tokenData.AccessToken,
-			"refresh_token":  tokenData.RefreshToken,
-			"profile_arn":    tokenData.ProfileArn,
-			"expires_at":     tokenData.ExpiresAt,
-			"auth_method":    tokenData.AuthMethod,
-			"provider":       tokenData.Provider,
-			"client_id":      tokenData.ClientID,
-			"client_secret":  tokenData.ClientSecret,
-			"client_id_hash": tokenData.ClientIDHash,
-			"email":          tokenData.Email,
-			"region":         tokenData.Region,
-			"start_url":      tokenData.StartURL,
-		},
-		Attributes: map[string]string{
-			"profile_arn": tokenData.ProfileArn,
-			"source":      "kiro-ide-import",
-			"email":       tokenData.Email,
-			"region":      tokenData.Region,
-		},
-		// NextRefreshAfter: 20 minutes before expiry
-		NextRefreshAfter: expiresAt.Add(-20 * time.Minute),
-	}
+	// Store client_id_hash and region/start_url in metadata for imported tokens
+	record.Metadata["client_id_hash"] = tokenData.ClientIDHash
+	record.Metadata["region"] = tokenData.Region
+	record.Metadata["start_url"] = tokenData.StartURL
 
 	// Display the email if extracted
 	if tokenData.Email != "" {
@@ -375,9 +247,12 @@ func (a *KiroAuthenticator) Refresh(ctx context.Context, cfg *config.Config, aut
 	// if they are missing from metadata. This handles the case where token was imported without
 	// clientId/clientSecret but has clientIdHash.
 	if (clientID == "" || clientSecret == "") && clientIDHash != "" {
-		if loadedClientID, loadedClientSecret, err := loadDeviceRegistrationCredentials(clientIDHash); err == nil {
-			clientID = loadedClientID
-			clientSecret = loadedClientSecret
+		homeDir, _ := os.UserHomeDir()
+		if homeDir != "" {
+			if loadedClientID, loadedClientSecret, errLoad := kiroauth.LoadDeviceRegistration(homeDir, clientIDHash); errLoad == nil {
+				clientID = loadedClientID
+				clientSecret = loadedClientSecret
+			}
 		}
 	}
 
@@ -430,43 +305,4 @@ func (a *KiroAuthenticator) Refresh(ctx context.Context, cfg *config.Config, aut
 	updated.NextRefreshAfter = expiresAt.Add(-20 * time.Minute)
 
 	return updated, nil
-}
-
-// loadDeviceRegistrationCredentials loads clientId and clientSecret from device registration file.
-// This is used when refreshing tokens that were imported without clientId/clientSecret.
-func loadDeviceRegistrationCredentials(clientIDHash string) (clientID, clientSecret string, err error) {
-	if clientIDHash == "" {
-		return "", "", fmt.Errorf("clientIdHash is empty")
-	}
-
-	// Sanitize clientIdHash to prevent path traversal
-	if strings.Contains(clientIDHash, "/") || strings.Contains(clientIDHash, "\\") || strings.Contains(clientIDHash, "..") {
-		return "", "", fmt.Errorf("invalid clientIdHash: contains path separator")
-	}
-
-	homeDir, err := os.UserHomeDir()
-	if err != nil {
-		return "", "", fmt.Errorf("failed to get home directory: %w", err)
-	}
-
-	deviceRegPath := filepath.Join(homeDir, ".aws", "sso", "cache", clientIDHash+".json")
-	data, err := os.ReadFile(deviceRegPath)
-	if err != nil {
-		return "", "", fmt.Errorf("failed to read device registration file: %w", err)
-	}
-
-	var deviceReg struct {
-		ClientID     string `json:"clientId"`
-		ClientSecret string `json:"clientSecret"`
-	}
-
-	if err := json.Unmarshal(data, &deviceReg); err != nil {
-		return "", "", fmt.Errorf("failed to parse device registration: %w", err)
-	}
-
-	if deviceReg.ClientID == "" || deviceReg.ClientSecret == "" {
-		return "", "", fmt.Errorf("device registration missing clientId or clientSecret")
-	}
-
-	return deviceReg.ClientID, deviceReg.ClientSecret, nil
 }

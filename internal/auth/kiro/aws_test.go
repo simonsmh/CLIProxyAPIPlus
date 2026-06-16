@@ -264,7 +264,7 @@ func TestGenerateTokenFileName(t *testing.T) {
 				Email:      "user@gmail.com",
 				StartURL:   "https://view.awsapps.com/start",
 			},
-			exact: "kiro-builder-id-user@gmail.com.json",
+			exact: "kiro-aws-user@gmail.com.json",
 		},
 		{
 			name: "Builder ID without email",
@@ -273,7 +273,7 @@ func TestGenerateTokenFileName(t *testing.T) {
 				Email:      "",
 				StartURL:   "https://view.awsapps.com/start",
 			},
-			prefix: "kiro-builder-id-",
+			prefix: "kiro-aws-",
 		},
 		{
 			name: "Social auth with email (Google)",
@@ -282,7 +282,7 @@ func TestGenerateTokenFileName(t *testing.T) {
 				Provider:   "Google",
 				Email:      "user@gmail.com",
 			},
-			exact: "kiro-social-google-user@gmail.com.json",
+			exact: "kiro-social-user@gmail.com.json",
 		},
 		{
 			name: "Social auth with email (GitHub)",
@@ -291,7 +291,7 @@ func TestGenerateTokenFileName(t *testing.T) {
 				Provider:   "Github",
 				Email:      "user@gmail.com",
 			},
-			exact: "kiro-social-github-user@gmail.com.json",
+			exact: "kiro-social-user@gmail.com.json",
 		},
 		{
 			name: "Social auth without provider",
@@ -309,7 +309,7 @@ func TestGenerateTokenFileName(t *testing.T) {
 				Provider:   "Google",
 				Email:      "",
 			},
-			prefix: "kiro-social-google-",
+			prefix: "kiro-social-",
 		},
 		{
 			name: "Empty auth method",

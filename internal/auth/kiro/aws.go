@@ -3,7 +3,9 @@
 package kiro
 
 import (
+	"crypto/rand"
 	"encoding/base64"
+	"encoding/binary"
 	"encoding/json"
 	"errors"
 	"fmt"
@@ -204,31 +206,35 @@ func LoadKiroIDEToken() (*KiroTokenData, error) {
 	// For Enterprise Kiro IDE (IDC auth), load clientId and clientSecret from device registration
 	// The device registration file is located at ~/.aws/sso/cache/{clientIdHash}.json
 	if token.ClientIDHash != "" && token.ClientID == "" {
-		if err := loadDeviceRegistration(homeDir, token.ClientIDHash, &token); err != nil {
+		if cid, csec, errLoad := LoadDeviceRegistration(homeDir, token.ClientIDHash); errLoad != nil {
 			// Log warning but don't fail - token might still work for some operations
-			log.Warnf("failed to load device registration for clientIdHash %s: %v", token.ClientIDHash, err)
+			log.Warnf("failed to load device registration for clientIdHash %s: %v", token.ClientIDHash, errLoad)
+		} else {
+			token.ClientID = cid
+			token.ClientSecret = csec
 		}
 	}
 
 	return &token, nil
 }
 
-// loadDeviceRegistration loads clientId and clientSecret from the device registration file.
+// LoadDeviceRegistration loads clientId and clientSecret from the device registration file.
 // Enterprise Kiro IDE stores these in ~/.aws/sso/cache/{clientIdHash}.json
-func loadDeviceRegistration(homeDir, clientIDHash string, token *KiroTokenData) error {
+// Returns the clientId and clientSecret values.
+func LoadDeviceRegistration(homeDir, clientIDHash string) (clientID, clientSecret string, err error) {
 	if clientIDHash == "" {
-		return fmt.Errorf("clientIdHash is empty")
+		return "", "", fmt.Errorf("clientIdHash is empty")
 	}
 
 	// Sanitize clientIdHash to prevent path traversal
 	if strings.Contains(clientIDHash, "/") || strings.Contains(clientIDHash, "\\") || strings.Contains(clientIDHash, "..") {
-		return fmt.Errorf("invalid clientIdHash: contains path separator")
+		return "", "", fmt.Errorf("invalid clientIdHash: contains path separator")
 	}
 
 	deviceRegPath := filepath.Join(homeDir, ".aws", "sso", "cache", clientIDHash+".json")
 	data, err := os.ReadFile(deviceRegPath)
 	if err != nil {
-		return fmt.Errorf("failed to read device registration file (%s): %w", deviceRegPath, err)
+		return "", "", fmt.Errorf("failed to read device registration file (%s): %w", deviceRegPath, err)
 	}
 
 	// Device registration file structure
@@ -239,17 +245,14 @@ func loadDeviceRegistration(homeDir, clientIDHash string, token *KiroTokenData) 
 	}
 
 	if err := json.Unmarshal(data, &deviceReg); err != nil {
-		return fmt.Errorf("failed to parse device registration: %w", err)
+		return "", "", fmt.Errorf("failed to parse device registration: %w", err)
 	}
 
 	if deviceReg.ClientID == "" || deviceReg.ClientSecret == "" {
-		return fmt.Errorf("device registration missing clientId or clientSecret")
+		return "", "", fmt.Errorf("device registration missing clientId or clientSecret")
 	}
 
-	token.ClientID = deviceReg.ClientID
-	token.ClientSecret = deviceReg.ClientSecret
-
-	return nil
+	return deviceReg.ClientID, deviceReg.ClientSecret, nil
 }
 
 // LoadKiroTokenFromPath loads token data from a custom path.
@@ -286,9 +289,12 @@ func LoadKiroTokenFromPath(tokenPath string) (*KiroTokenData, error) {
 
 	// For Enterprise Kiro IDE (IDC auth), load clientId and clientSecret from device registration
 	if token.ClientIDHash != "" && token.ClientID == "" {
-		if err := loadDeviceRegistration(homeDir, token.ClientIDHash, &token); err != nil {
+		if cid, csec, errLoad := LoadDeviceRegistration(homeDir, token.ClientIDHash); errLoad != nil {
 			// Log warning but don't fail - token might still work for some operations
-			log.Warnf("failed to load device registration for clientIdHash %s: %v", token.ClientIDHash, err)
+			log.Warnf("failed to load device registration for clientIdHash %s: %v", token.ClientIDHash, errLoad)
+		} else {
+			token.ClientID = cid
+			token.ClientSecret = csec
 		}
 	}
 
@@ -489,6 +495,16 @@ func ExtractIDCIdentifier(startURL string) string {
 	return ""
 }
 
+// CryptoSeq generates a collision-resistant sequence number using crypto/rand.
+// Falls back to time-based seed if the system random source is unavailable.
+func CryptoSeq() int64 {
+	var b [2]byte
+	if _, err := rand.Read(b[:]); err != nil {
+		return time.Now().UnixNano() % 100000
+	}
+	return int64(binary.BigEndian.Uint16(b[:])) % 100000
+}
+
 // GenerateTokenFileName generates a unique filename for token storage.
 // Priority: email > startUrl identifier (for IDC) > authMethod only
 // Email is unique, so no sequence suffix needed. Sequence is only added
@@ -498,16 +514,10 @@ func ExtractIDCIdentifier(startURL string) string {
 func GenerateTokenFileName(tokenData *KiroTokenData) string {
 	authMethod := sanitizeTokenFileComponent(tokenData.AuthMethod, "unknown")
 
-	// For social auth, include the provider in the filename
-	provider := ""
-	if authMethod == "social" && tokenData.Provider != "" {
-		provider = strings.ToLower(tokenData.Provider)
-	}
-
-	// Build the auth method prefix: "kiro-social-google" or "kiro-builder-id"
+	// Build the auth method prefix: "kiro-aws" for builder-id, "kiro-social" for social
 	methodPrefix := authMethod
-	if provider != "" {
-		methodPrefix = authMethod + "-" + provider
+	if authMethod == "builder-id" {
+		methodPrefix = "aws"
 	}
 
 	// Priority 1: Use email if available (no sequence needed, email is unique)
@@ -517,7 +527,7 @@ func GenerateTokenFileName(tokenData *KiroTokenData) string {
 	}
 
 	// Generate sequence only when email is unavailable
-	seq := time.Now().UnixNano() % 100000
+	seq := CryptoSeq()
 
 	// Priority 2: For IDC, use startUrl identifier with sequence
 	if authMethod == "idc" && tokenData.StartURL != "" {

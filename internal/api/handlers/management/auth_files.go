@@ -4314,33 +4314,25 @@ func (h *Handler) RequestKiroToken(c *gin.Context) {
 
 								expiresAt := time.Now().Add(time.Duration(tokenResp.ExpiresIn) * time.Second)
 
-								idPart := kiroauth.SanitizeEmailForFilename(email)
-								if idPart == "" {
-									idPart = fmt.Sprintf("%d", time.Now().UnixNano()%100000)
+								tokenData := &kiroauth.KiroTokenData{
+									AccessToken:  tokenResp.AccessToken,
+									RefreshToken: tokenResp.RefreshToken,
+									ProfileArn:   profileArn,
+									ExpiresAt:    expiresAt.Format(time.RFC3339),
+									AuthMethod:   authMethod,
+									Provider:     "AWS",
+									ClientID:     regResp.ClientID,
+									ClientSecret: regResp.ClientSecret,
+									Email:        email,
+									Region:       idcRegion,
+									StartURL:     issuerURL,
 								}
 
-								now := time.Now()
-								fileName := fmt.Sprintf("kiro-aws-%s.json", idPart)
-
-								record := &coreauth.Auth{
-									ID:       fileName,
-									Provider: "kiro",
-									FileName: fileName,
-									Metadata: map[string]any{
-										"type":          "kiro",
-										"access_token":  tokenResp.AccessToken,
-										"refresh_token": tokenResp.RefreshToken,
-										"profile_arn":   profileArn,
-										"expires_at":    expiresAt.Format(time.RFC3339),
-										"auth_method":   authMethod,
-										"provider":      "AWS",
-										"client_id":     regResp.ClientID,
-										"client_secret": regResp.ClientSecret,
-										"email":         email,
-										"last_refresh":  now.Format(time.RFC3339),
-										"region":        idcRegion,
-										"start_url":     issuerURL,
-									},
+								record, errRecord := sdkAuth.CreateAuthRecord(tokenData, "aws")
+								if errRecord != nil {
+									log.Errorf("Failed to create auth record: %v", errRecord)
+									SetOAuthSessionError(state, "Failed to create auth record")
+									return
 								}
 
 								savedPath, errSave := h.saveTokenRecord(ctx, record)
@@ -4374,13 +4366,13 @@ func (h *Handler) RequestKiroToken(c *gin.Context) {
 				if provider == "" {
 					provider = "Google" // Fallback for backward compatibility
 				}
-				
+
 				// Build actual redirect URI with login_option (matches CLI's callback handling)
 				actualRedirectURI := redirectURI
 				if provider != "" {
 					actualRedirectURI = redirectURI + "?login_option=" + provider
 				}
-				
+
 				// Exchange code for tokens
 				tokenReq := &kiroauth.CreateTokenRequest{
 					Code:         code,
@@ -4403,29 +4395,21 @@ func (h *Handler) RequestKiroToken(c *gin.Context) {
 				expiresAt := time.Now().Add(time.Duration(expiresIn) * time.Second)
 				email := kiroauth.ExtractEmailFromJWT(tokenResp.AccessToken)
 
-				idPart := kiroauth.SanitizeEmailForFilename(email)
-				if idPart == "" {
-					idPart = fmt.Sprintf("%d", time.Now().UnixNano()%100000)
+				tokenData := &kiroauth.KiroTokenData{
+					AccessToken:  tokenResp.AccessToken,
+					RefreshToken: tokenResp.RefreshToken,
+					ProfileArn:   tokenResp.ProfileArn,
+					ExpiresAt:    expiresAt.Format(time.RFC3339),
+					AuthMethod:   "social",
+					Provider:     provider,
+					Email:        email,
 				}
 
-				now := time.Now()
-				fileName := fmt.Sprintf("kiro-%s-%s.json", strings.ToLower(provider), idPart)
-
-				record := &coreauth.Auth{
-					ID:       fileName,
-					Provider: "kiro",
-					FileName: fileName,
-					Metadata: map[string]any{
-						"type":          "kiro",
-						"access_token":  tokenResp.AccessToken,
-						"refresh_token": tokenResp.RefreshToken,
-						"profile_arn":   tokenResp.ProfileArn,
-						"expires_at":    expiresAt.Format(time.RFC3339),
-						"auth_method":   "social",
-						"provider":      provider,
-						"email":         email,
-						"last_refresh":  now.Format(time.RFC3339),
-					},
+				record, errRecord := sdkAuth.CreateAuthRecord(tokenData, "social")
+				if errRecord != nil {
+					log.Errorf("Failed to create auth record: %v", errRecord)
+					SetOAuthSessionError(state, "Failed to create auth record")
+					return
 				}
 
 				savedPath, errSave := h.saveTokenRecord(ctx, record)
@@ -4448,8 +4432,6 @@ func (h *Handler) RequestKiroToken(c *gin.Context) {
 
 	c.JSON(200, gin.H{"status": "ok", "url": authURL, "state": state})
 }
-
-
 
 // getKiroUsageForAuth checks usage quota for a Kiro auth record.
 func (h *Handler) getKiroUsageForAuth(ctx context.Context, auth *coreauth.Auth) gin.H {
