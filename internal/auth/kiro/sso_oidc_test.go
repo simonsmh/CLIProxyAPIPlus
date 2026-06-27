@@ -3,7 +3,6 @@ package kiro
 import (
 	"context"
 	"encoding/json"
-	"fmt"
 	"io"
 	"net/http"
 	"net/http/httptest"
@@ -38,11 +37,11 @@ func TestTryListAvailableProfiles_UsesClientIDForAccountKey(t *testing.T) {
 	}
 
 	accountKey := GetAccountKey("client-id-123", "refresh-token-456")
-	fp := GlobalFingerprintManager().GetFingerprint(accountKey)
-	expected := fmt.Sprintf("aws-sdk-js/%s KiroIDE-%s-%s", fp.RuntimeSDKVersion, fp.KiroVersion, fp.KiroHash)
+	_ = accountKey // accountKey no longer affects UA format
+	_, expectedAmzUA := kiroUserAgent(ApiRuntime, "F,C")
 	got := rt.lastReq.Header.Get("X-Amz-User-Agent")
-	if got != expected {
-		t.Errorf("X-Amz-User-Agent = %q, want %q", got, expected)
+	if got != expectedAmzUA {
+		t.Errorf("X-Amz-User-Agent = %q, want %q", got, expectedAmzUA)
 	}
 }
 
@@ -58,11 +57,11 @@ func TestTryListAvailableProfiles_UsesRefreshTokenWhenClientIDMissing(t *testing
 	}
 
 	accountKey := GetAccountKey("", "refresh-token-789")
-	fp := GlobalFingerprintManager().GetFingerprint(accountKey)
-	expected := fmt.Sprintf("aws-sdk-js/%s KiroIDE-%s-%s", fp.RuntimeSDKVersion, fp.KiroVersion, fp.KiroHash)
+	_ = accountKey // accountKey no longer affects UA format
+	_, expectedAmzUA2 := kiroUserAgent(ApiRuntime, "F,C")
 	got := rt.lastReq.Header.Get("X-Amz-User-Agent")
-	if got != expected {
-		t.Errorf("X-Amz-User-Agent = %q, want %q", got, expected)
+	if got != expectedAmzUA2 {
+		t.Errorf("X-Amz-User-Agent = %q, want %q", got, expectedAmzUA2)
 	}
 }
 
@@ -130,16 +129,15 @@ func TestRegisterClientForAuthCodeWithIDC(t *testing.T) {
 	if ct := capturedReq.Headers.Get("Content-Type"); ct != "application/json" {
 		t.Errorf("Content-Type = %q, want application/json", ct)
 	}
+	expectedUA, expectedAmzUA := kiroUserAgent(ApiOIDC, "E")
+
 	ua := capturedReq.Headers.Get("User-Agent")
-	if !strings.Contains(ua, "KiroIDE") {
-		t.Errorf("User-Agent %q does not contain KiroIDE", ua)
-	}
-	if !strings.Contains(ua, "sso-oidc") {
-		t.Errorf("User-Agent %q does not contain sso-oidc", ua)
+	if ua != expectedUA {
+		t.Errorf("User-Agent = %q, want %q", ua, expectedUA)
 	}
 	xua := capturedReq.Headers.Get("X-Amz-User-Agent")
-	if !strings.Contains(xua, "KiroIDE") {
-		t.Errorf("x-amz-user-agent %q does not contain KiroIDE", xua)
+	if xua != expectedAmzUA {
+		t.Errorf("x-amz-user-agent = %q, want %q", xua, expectedAmzUA)
 	}
 
 	// Verify body fields

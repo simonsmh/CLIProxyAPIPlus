@@ -39,7 +39,7 @@ func TestToolResultsAttachedToCurrentMessage(t *testing.T) {
 		]
 	}`)
 
-	result, _ := BuildKiroPayloadFromOpenAI(input, "kiro-model", "", "CLI", false, false, nil, nil)
+	result := BuildKiroPayloadFromOpenAI(input, "kiro-model", "", "CLI", "kiro-model")
 
 	var payload KiroPayload
 	if err := json.Unmarshal(result, &payload); err != nil {
@@ -106,7 +106,7 @@ func TestToolResultsInHistoryUserMessage(t *testing.T) {
 		]
 	}`)
 
-	result, _ := BuildKiroPayloadFromOpenAI(input, "kiro-model", "", "CLI", false, false, nil, nil)
+	result := BuildKiroPayloadFromOpenAI(input, "kiro-model", "", "CLI", "kiro-model")
 
 	var payload KiroPayload
 	if err := json.Unmarshal(result, &payload); err != nil {
@@ -185,7 +185,7 @@ func TestToolResultsWithMultipleToolCalls(t *testing.T) {
 		]
 	}`)
 
-	result, _ := BuildKiroPayloadFromOpenAI(input, "kiro-model", "", "CLI", false, false, nil, nil)
+	result := BuildKiroPayloadFromOpenAI(input, "kiro-model", "", "CLI", "kiro-model")
 
 	var payload KiroPayload
 	if err := json.Unmarshal(result, &payload); err != nil {
@@ -247,7 +247,7 @@ func TestToolResultsAtEndOfConversation(t *testing.T) {
 		]
 	}`)
 
-	result, _ := BuildKiroPayloadFromOpenAI(input, "kiro-model", "", "CLI", false, false, nil, nil)
+	result := BuildKiroPayloadFromOpenAI(input, "kiro-model", "", "CLI", "kiro-model")
 
 	var payload KiroPayload
 	if err := json.Unmarshal(result, &payload); err != nil {
@@ -323,7 +323,7 @@ func TestToolResultsFollowedByAssistant(t *testing.T) {
 		]
 	}`)
 
-	result, _ := BuildKiroPayloadFromOpenAI(input, "kiro-model", "", "CLI", false, false, nil, nil)
+	result := BuildKiroPayloadFromOpenAI(input, "kiro-model", "", "CLI", "kiro-model")
 
 	var payload KiroPayload
 	if err := json.Unmarshal(result, &payload); err != nil {
@@ -372,16 +372,16 @@ func TestAssistantEndsConversation(t *testing.T) {
 		]
 	}`)
 
-	result, _ := BuildKiroPayloadFromOpenAI(input, "kiro-model", "", "CLI", false, false, nil, nil)
+	result := BuildKiroPayloadFromOpenAI(input, "kiro-model", "", "CLI", "kiro-model")
 
 	var payload KiroPayload
 	if err := json.Unmarshal(result, &payload); err != nil {
 		t.Fatalf("Failed to unmarshal result: %v", err)
 	}
 
-	// When assistant is last, a "Continue" user message should be created
-	if payload.ConversationState.CurrentMessage.UserInputMessage.Content == "" {
-		t.Error("Expected a 'Continue' message to be created when assistant is last")
+	// When assistant is last, a continuation user message should be created with empty content
+	if payload.ConversationState.CurrentMessage.UserInputMessage.Content != "" {
+		t.Errorf("Expected a continuation message with empty content when assistant is last, got %q", payload.ConversationState.CurrentMessage.UserInputMessage.Content)
 	}
 }
 

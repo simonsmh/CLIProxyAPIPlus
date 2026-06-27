@@ -6,114 +6,36 @@ package openai
 import (
 	"encoding/json"
 	"fmt"
-	"net/http"
 	"strings"
-	"time"
 	"unicode/utf8"
 
 	"github.com/google/uuid"
-	kiroclaude "github.com/router-for-me/CLIProxyAPI/v7/internal/translator/kiro/claude"
+	"github.com/router-for-me/CLIProxyAPI/v7/internal/thinking"
 	kirocommon "github.com/router-for-me/CLIProxyAPI/v7/internal/translator/kiro/common"
 	log "github.com/sirupsen/logrus"
 	"github.com/tidwall/gjson"
 )
 
-// Kiro API request structs - reuse from kiroclaude package structure
-
-// KiroPayload is the top-level request structure for Kiro API
-type KiroPayload struct {
-	ConversationState KiroConversationState `json:"conversationState"`
-	ProfileArn        string                `json:"profileArn,omitempty"`
-}
-
-// KiroConversationState holds the conversation context
-type KiroConversationState struct {
-	AgentContinuationID string               `json:"agentContinuationId,omitempty"`
-	AgentTaskType       string               `json:"agentTaskType,omitempty"`
-	ChatTriggerType     string               `json:"chatTriggerType"` // Required: "MANUAL"
-	ConversationID      string               `json:"conversationId"`
-	CurrentMessage      KiroCurrentMessage   `json:"currentMessage"`
-	History             []KiroHistoryMessage `json:"history,omitempty"`
-}
-
-// KiroCurrentMessage wraps the current user message
-type KiroCurrentMessage struct {
-	UserInputMessage KiroUserInputMessage `json:"userInputMessage"`
-}
-
-// KiroHistoryMessage represents a message in the conversation history
-type KiroHistoryMessage struct {
-	UserInputMessage         *KiroUserInputMessage         `json:"userInputMessage,omitempty"`
-	AssistantResponseMessage *KiroAssistantResponseMessage `json:"assistantResponseMessage,omitempty"`
-}
-
-// KiroImage represents an image in Kiro API format
-type KiroImage struct {
-	Format string          `json:"format"`
-	Source KiroImageSource `json:"source"`
-}
-
-// KiroImageSource contains the image data
-type KiroImageSource struct {
-	Bytes string `json:"bytes"` // base64 encoded image data
-}
-
-// KiroUserInputMessage represents a user message
-type KiroUserInputMessage struct {
-	Content                 string                       `json:"content"`
-	ModelID                 string                       `json:"modelId"`
-	Origin                  string                       `json:"origin"`
-	Images                  []KiroImage                  `json:"images,omitempty"`
-	UserInputMessageContext *KiroUserInputMessageContext `json:"userInputMessageContext,omitempty"`
-}
-
-// KiroUserInputMessageContext contains tool-related context
-type KiroUserInputMessageContext struct {
-	ToolResults []KiroToolResult  `json:"toolResults,omitempty"`
-	Tools       []KiroToolWrapper `json:"tools,omitempty"`
-}
-
-// KiroToolResult represents a tool execution result
-type KiroToolResult struct {
-	Content   []KiroTextContent `json:"content"`
-	Status    string            `json:"status"`
-	ToolUseID string            `json:"toolUseId"`
-}
-
-// KiroTextContent represents text content
-type KiroTextContent struct {
-	Text string `json:"text"`
-}
-
-// KiroToolWrapper wraps a tool specification
-type KiroToolWrapper struct {
-	ToolSpecification KiroToolSpecification `json:"toolSpecification"`
-}
-
-// KiroToolSpecification defines a tool's schema
-type KiroToolSpecification struct {
-	Name        string          `json:"name"`
-	Description string          `json:"description"`
-	InputSchema KiroInputSchema `json:"inputSchema"`
-}
-
-// KiroInputSchema wraps the JSON schema for tool input
-type KiroInputSchema struct {
-	JSON interface{} `json:"json"`
-}
-
-// KiroAssistantResponseMessage represents an assistant message
-type KiroAssistantResponseMessage struct {
-	Content  string        `json:"content"`
-	ToolUses []KiroToolUse `json:"toolUses,omitempty"`
-}
-
-// KiroToolUse represents a tool invocation by the assistant
-type KiroToolUse struct {
-	ToolUseID string                 `json:"toolUseId"`
-	Name      string                 `json:"name"`
-	Input     map[string]interface{} `json:"input"`
-}
+type (
+	KiroPayload                      = kirocommon.KiroPayload
+	KiroConversationState            = kirocommon.KiroConversationState
+	KiroCurrentMessage               = kirocommon.KiroCurrentMessage
+	KiroHistoryMessage               = kirocommon.KiroHistoryMessage
+	KiroImage                        = kirocommon.KiroImage
+	KiroImageSource                  = kirocommon.KiroImageSource
+	KiroUserInputMessage             = kirocommon.KiroUserInputMessage
+	KiroUserInputMessageContext      = kirocommon.KiroUserInputMessageContext
+	KiroToolResult                   = kirocommon.KiroToolResult
+	KiroTextContent                  = kirocommon.KiroTextContent
+	KiroToolWrapper                  = kirocommon.KiroToolWrapper
+	KiroToolSpecification            = kirocommon.KiroToolSpecification
+	KiroInputSchema                  = kirocommon.KiroInputSchema
+	KiroAssistantResponseMessage     = kirocommon.KiroAssistantResponseMessage
+	KiroToolUse                      = kirocommon.KiroToolUse
+	KiroAdditionalModelRequestFields = kirocommon.KiroAdditionalModelRequestFields
+	KiroThinkingConfig               = kirocommon.KiroThinkingConfig
+	KiroOutputConfig                 = kirocommon.KiroOutputConfig
+)
 
 // ConvertOpenAIRequestToKiro converts an OpenAI Chat Completions request to Kiro format.
 // This is the main entry point for request translation.
@@ -127,103 +49,26 @@ func ConvertOpenAIRequestToKiro(modelName string, inputRawJSON []byte, stream bo
 // BuildKiroPayloadFromOpenAI constructs the Kiro API request payload from OpenAI format.
 // Supports tool calling - tools are passed via userInputMessageContext.
 // origin parameter determines which quota to use: "CLI" for Amazon Q, "AI_EDITOR" for Kiro IDE.
-// isAgentic parameter enables chunked write optimization prompt for -agentic model variants.
-// isChatOnly parameter disables tool calling for -chat model variants (pure conversation mode).
-// headers parameter allows checking Anthropic-Beta header for thinking mode detection.
-// metadata parameter is kept for API compatibility but no longer used for thinking configuration.
-// Returns the payload and a boolean indicating whether thinking mode was injected.
-func BuildKiroPayloadFromOpenAI(openaiBody []byte, modelID, profileArn, origin string, isAgentic, isChatOnly bool, headers http.Header, metadata map[string]any) ([]byte, bool) {
-	log.Debugf("kiro-openai: BuildKiroPayloadFromOpenAI called, modelID=%s, origin=%s, isAgentic=%v, isChatOnly=%v", modelID, origin, isAgentic, isChatOnly)
+// Returns the serialized Kiro API request payload.
+func BuildKiroPayloadFromOpenAI(openaiBody []byte, modelID, profileArn, origin string, requestedModel string) []byte {
+	log.Debugf("kiro-openai: BuildKiroPayloadFromOpenAI called, modelID=%s, origin=%s, requestedModel=%s", modelID, origin, requestedModel)
 
 	// Normalize origin value for Kiro API compatibility
-	origin = normalizeOrigin(origin)
+	origin = kirocommon.NormalizeOrigin(origin)
 	log.Debugf("kiro-openai: normalized origin value: %s", origin)
 
 	messages := gjson.GetBytes(openaiBody, "messages")
 
-	// For chat-only mode, don't include tools
-	var tools gjson.Result
-	if !isChatOnly {
-		tools = gjson.GetBytes(openaiBody, "tools")
-	}
+	tools := gjson.GetBytes(openaiBody, "tools")
 
 	// Extract system prompt from messages
 	systemPrompt := extractSystemPromptFromOpenAI(messages)
-
-	// Early exit: if system prompt injection is disabled, drop the client system prompt
-	// immediately to avoid unnecessary string building (timestamp, agentic, thinking tags, etc.)
-	if !kirocommon.IsSystemPromptInjectEnabled() {
-		if systemPrompt != "" {
-			log.Debugf("kiro-openai: system prompt injection disabled, dropping system prompt (len=%d)", len(systemPrompt))
-		}
-		systemPrompt = ""
-	}
-
-	// Inject timestamp context
-	timestamp := time.Now().Format("2006-01-02 15:04:05 MST")
-	timestampContext := fmt.Sprintf("[Context: Current time is %s]", timestamp)
-	if systemPrompt != "" {
-		systemPrompt = timestampContext + "\n\n" + systemPrompt
-	} else {
-		systemPrompt = timestampContext
-	}
-	log.Debugf("kiro-openai: injected timestamp context: %s", timestamp)
-
-	// Inject agentic optimization prompt for -agentic model variants
-	if isAgentic {
-		if systemPrompt != "" {
-			systemPrompt += "\n"
-		}
-		systemPrompt += kirocommon.KiroAgenticSystemPrompt
-	}
-
-	// Handle tool_choice parameter - Kiro doesn't support it natively, so we inject system prompt hints
-	// OpenAI tool_choice values: "none", "auto", "required", or {"type":"function","function":{"name":"..."}}
-	toolChoiceHint := extractToolChoiceHint(openaiBody)
-	if toolChoiceHint != "" {
-		if systemPrompt != "" {
-			systemPrompt += "\n"
-		}
-		systemPrompt += toolChoiceHint
-		log.Debugf("kiro-openai: injected tool_choice hint into system prompt")
-	}
-
-	// Handle response_format parameter - Kiro doesn't support it natively, so we inject system prompt hints
-	// OpenAI response_format: {"type": "json_object"} or {"type": "json_schema", "json_schema": {...}}
-	responseFormatHint := extractResponseFormatHint(openaiBody)
-	if responseFormatHint != "" {
-		if systemPrompt != "" {
-			systemPrompt += "\n"
-		}
-		systemPrompt += responseFormatHint
-		log.Debugf("kiro-openai: injected response_format hint into system prompt")
-	}
-
-	// Check for thinking mode
-	// Supports OpenAI reasoning_effort parameter, model name hints, and Anthropic-Beta header
-	thinkingEnabled := checkThinkingModeFromOpenAIWithHeaders(openaiBody, headers)
 
 	// Convert OpenAI tools to Kiro format
 	kiroTools := convertOpenAIToolsToKiro(tools)
 	log.Infof("kiro-openai: tools conversion: input_exist=%v, output_count=%d", tools.IsArray(), len(kiroTools))
 	for i, t := range kiroTools {
 		log.Debugf("kiro-openai: tool[%d]: name=%s", i, t.ToolSpecification.Name)
-	}
-
-	// Thinking mode implementation:
-	// Kiro API supports official thinking/reasoning mode via <thinking_mode> tag.
-	// When set to "enabled", Kiro returns reasoning content as official reasoningContentEvent
-	// rather than inline <thinking> tags in assistantResponseEvent.
-	// Use a conservative thinking budget to reduce latency/cost spikes in long sessions.
-	if thinkingEnabled {
-		thinkingHint := `<thinking_mode>enabled</thinking_mode>
-<max_thinking_length>16000</max_thinking_length>`
-		if systemPrompt != "" {
-			systemPrompt = thinkingHint + "\n\n" + systemPrompt
-		} else {
-			systemPrompt = thinkingHint
-		}
-		log.Infof("kiro-openai: injected thinking prompt (official mode), has_tools: %v", len(kiroTools) > 0)
 	}
 
 	// Process messages and build history
@@ -234,14 +79,14 @@ func BuildKiroPayloadFromOpenAI(openaiBody []byte, modelID, profileArn, origin s
 		currentUserMsg.Content = buildFinalContent(currentUserMsg.Content, systemPrompt, currentToolResults)
 
 		// Deduplicate currentToolResults
-		currentToolResults = deduplicateToolResults(currentToolResults)
+		currentToolResults = kirocommon.DeduplicateToolResults(currentToolResults)
 
 		// Build userInputMessageContext with tools and tool results.
 		// See claude translator for the rationale — Kiro rejects requests when
 		// history contains tool turns but currentMessage.tools is empty. Fall
 		// back to stub specs derived from history if the client omitted tools.
-		if len(kiroTools) == 0 && !isChatOnly {
-			kiroTools = synthesizeToolSpecsFromHistory(history)
+		if len(kiroTools) == 0 {
+			kiroTools = kirocommon.SynthesizeToolSpecsFromHistory(history)
 			if len(kiroTools) > 0 {
 				log.Infof("kiro-openai: synthesized %d stub tool spec(s) from history (client did not send tools)", len(kiroTools))
 			}
@@ -260,20 +105,10 @@ func BuildKiroPayloadFromOpenAI(openaiBody []byte, modelID, profileArn, origin s
 		currentMessage = KiroCurrentMessage{UserInputMessage: *currentUserMsg}
 	} else {
 		fallbackContent := ""
-		if systemPrompt != "" && kirocommon.IsSystemPromptInjectEnabled() {
-			fallbackContent = "--- SYSTEM PROMPT ---\n" + systemPrompt + "\n--- END SYSTEM PROMPT ---\n"
-			log.Debugf("kiro-openai: system prompt injected into fallback user message (len=%d)", len(systemPrompt))
-		} else if systemPrompt != "" {
-			log.Debugf("kiro-openai: system prompt dropped (inject disabled, len=%d)", len(systemPrompt))
+		if systemPrompt != "" {
+			fallbackContent = systemPrompt
 		} else {
 			log.Debugf("kiro-openai: no system prompt present in fallback user message")
-		}
-		// CRITICAL: Kiro API requires non-empty content for currentMessage.
-		// When system prompt injection is disabled, fallbackContent is empty.
-		// Use DefaultUserContent to avoid "Improperly formed request" 400 error.
-		if strings.TrimSpace(fallbackContent) == "" {
-			fallbackContent = kirocommon.DefaultUserContent
-			log.Debugf("kiro-openai: fallback user message content was empty, using default: %s", fallbackContent)
 		}
 		currentMessage = KiroCurrentMessage{UserInputMessage: KiroUserInputMessage{
 			Content: fallbackContent,
@@ -283,10 +118,64 @@ func BuildKiroPayloadFromOpenAI(openaiBody []byte, modelID, profileArn, origin s
 	}
 
 	// Session IDs: extract from messages[].additional_kwargs (LangChain format) or random
-	conversationID := extractMetadataFromMessages(messages, "conversationId")
-	continuationID := extractMetadataFromMessages(messages, "continuationId")
+	conversationID := kirocommon.ExtractMetadataFromMessages(messages, "conversationId")
+	continuationID := kirocommon.ExtractMetadataFromMessages(messages, "continuationId")
 	if conversationID == "" {
 		conversationID = uuid.New().String()
+	}
+
+	// Extract thinking config only from the request body
+	config := thinking.ExtractThinkingConfigPublic(openaiBody, "openai")
+
+	// Build additionalModelRequestFields if target model is not "auto"
+	var additionalFields *KiroAdditionalModelRequestFields
+	if modelID != "auto" {
+		if config.Mode == thinking.ModeLevel && config.Level != "" {
+			levelStr := strings.ToLower(strings.TrimSpace(string(config.Level)))
+			if levelStr == "minimal" {
+				levelStr = "low"
+			}
+			if levelStr == "auto" {
+				additionalFields = &KiroAdditionalModelRequestFields{
+					Thinking: &KiroThinkingConfig{Type: "adaptive"},
+				}
+			} else if levelStr == "none" {
+				additionalFields = &KiroAdditionalModelRequestFields{
+					Thinking: &KiroThinkingConfig{Type: "disabled"},
+				}
+			} else if levelStr == "low" || levelStr == "medium" || levelStr == "high" || levelStr == "xhigh" || levelStr == "max" {
+				additionalFields = &KiroAdditionalModelRequestFields{
+					Thinking:     &KiroThinkingConfig{Type: "adaptive"},
+					OutputConfig: &KiroOutputConfig{Effort: levelStr},
+				}
+			}
+		} else if config.Mode == thinking.ModeBudget {
+			levelStr, ok := thinking.ConvertBudgetToLevel(config.Budget)
+			if ok {
+				levelStr = strings.ToLower(strings.TrimSpace(levelStr))
+				if levelStr == "minimal" {
+					levelStr = "low"
+				}
+				if levelStr == "none" {
+					additionalFields = &KiroAdditionalModelRequestFields{
+						Thinking: &KiroThinkingConfig{Type: "disabled"},
+					}
+				} else if levelStr == "low" || levelStr == "medium" || levelStr == "high" || levelStr == "xhigh" || levelStr == "max" {
+					additionalFields = &KiroAdditionalModelRequestFields{
+						Thinking:     &KiroThinkingConfig{Type: "adaptive"},
+						OutputConfig: &KiroOutputConfig{Effort: levelStr},
+					}
+				}
+			}
+		} else if config.Mode == thinking.ModeNone {
+			additionalFields = &KiroAdditionalModelRequestFields{
+				Thinking: &KiroThinkingConfig{Type: "disabled"},
+			}
+		} else if config.Mode == thinking.ModeAuto {
+			additionalFields = &KiroAdditionalModelRequestFields{
+				Thinking: &KiroThinkingConfig{Type: "adaptive"},
+			}
+		}
 	}
 
 	payload := KiroPayload{
@@ -297,7 +186,9 @@ func BuildKiroPayloadFromOpenAI(openaiBody []byte, modelID, profileArn, origin s
 			CurrentMessage:  currentMessage,
 			History:         history,
 		},
-		ProfileArn: profileArn,
+		ProfileArn:                   profileArn,
+		AgentMode:                    "vibe",
+		AdditionalModelRequestFields: additionalFields,
 	}
 
 	// Only set AgentContinuationID if client provided
@@ -308,38 +199,10 @@ func BuildKiroPayloadFromOpenAI(openaiBody []byte, modelID, profileArn, origin s
 	result, err := json.Marshal(payload)
 	if err != nil {
 		log.Debugf("kiro-openai: failed to marshal payload: %v", err)
-		return nil, false
+		return nil
 	}
 
-	return result, thinkingEnabled
-}
-
-// normalizeOrigin normalizes origin value for Kiro API compatibility
-func normalizeOrigin(origin string) string {
-	switch origin {
-	case "KIRO_CLI":
-		return "CLI"
-	case "KIRO_AI_EDITOR":
-		return "AI_EDITOR"
-	case "AMAZON_Q":
-		return "CLI"
-	case "KIRO_IDE":
-		return "AI_EDITOR"
-	default:
-		return origin
-	}
-}
-
-// extractMetadataFromMessages extracts metadata from messages[].additional_kwargs (LangChain format).
-// Searches from the last message backwards, returns empty string if not found.
-func extractMetadataFromMessages(messages gjson.Result, key string) string {
-	arr := messages.Array()
-	for i := len(arr) - 1; i >= 0; i-- {
-		if val := arr[i].Get("additional_kwargs." + key); val.Exists() && val.String() != "" {
-			return val.String()
-		}
-	}
-	return ""
+	return result
 }
 
 // extractSystemPromptFromOpenAI extracts system prompt from OpenAI messages
@@ -366,75 +229,6 @@ func extractSystemPromptFromOpenAI(messages gjson.Result) string {
 	}
 
 	return strings.Join(systemParts, "\n")
-}
-
-// shortenToolNameIfNeeded shortens tool names that exceed 64 characters.
-// MCP tools often have long names like "mcp__server-name__tool-name".
-// This preserves the "mcp__" prefix and last segment when possible.
-func shortenToolNameIfNeeded(name string) string {
-	const limit = 64
-	if len(name) <= limit {
-		return name
-	}
-	// For MCP tools, try to preserve prefix and last segment
-	if strings.HasPrefix(name, "mcp__") {
-		idx := strings.LastIndex(name, "__")
-		if idx > 0 {
-			cand := "mcp__" + name[idx+2:]
-			if len(cand) > limit {
-				return cand[:limit]
-			}
-			return cand
-		}
-	}
-	return name[:limit]
-}
-
-func ensureKiroInputSchema(parameters interface{}) interface{} {
-	if parameters != nil {
-		return parameters
-	}
-	return map[string]interface{}{
-		"type":       "object",
-		"properties": map[string]interface{}{},
-	}
-}
-
-// synthesizeToolSpecsFromHistory builds stub KiroToolWrapper entries from any
-// toolUse names referenced in history. See the matching helper in the claude
-// translator for context — Kiro requires currentMessage.userInputMessageContext.tools
-// to be non-empty whenever history contains tool turns; otherwise the API
-// rejects the request with "Improperly formed request".
-func synthesizeToolSpecsFromHistory(history []KiroHistoryMessage) []KiroToolWrapper {
-	if len(history) == 0 {
-		return nil
-	}
-	seen := make(map[string]bool)
-	var stubs []KiroToolWrapper
-	for _, h := range history {
-		if h.AssistantResponseMessage == nil {
-			continue
-		}
-		for _, tu := range h.AssistantResponseMessage.ToolUses {
-			name := strings.TrimSpace(tu.Name)
-			if name == "" || seen[name] {
-				continue
-			}
-			seen[name] = true
-			stubs = append(stubs, KiroToolWrapper{
-				ToolSpecification: KiroToolSpecification{
-					Name:        shortenToolNameIfNeeded(name),
-					Description: fmt.Sprintf("Tool: %s", name),
-					InputSchema: KiroInputSchema{JSON: map[string]interface{}{
-						"type":                 "object",
-						"properties":           map[string]interface{}{},
-						"additionalProperties": true,
-					}},
-				},
-			})
-		}
-	}
-	return stubs
 }
 
 // convertOpenAIToolsToKiro converts OpenAI tools to Kiro format
@@ -483,11 +277,11 @@ func convertOpenAIToolsToKiro(tools gjson.Result) []KiroToolWrapper {
 		if parametersResult.Exists() && parametersResult.Type != gjson.Null {
 			parameters = parametersResult.Value()
 		}
-		parameters = ensureKiroInputSchema(parameters)
+		parameters = kirocommon.EnsureKiroInputSchema(parameters)
 
 		// Shorten tool name if it exceeds 64 characters (common with MCP tools)
 		originalName := name
-		name = shortenToolNameIfNeeded(name)
+		name = kirocommon.ShortenToolNameIfNeeded(name)
 		if name != originalName {
 			log.Debugf("kiro-openai: shortened tool name from '%s' to '%s'", originalName, name)
 		}
@@ -496,6 +290,13 @@ func convertOpenAIToolsToKiro(tools gjson.Result) []KiroToolWrapper {
 		if strings.TrimSpace(description) == "" {
 			description = fmt.Sprintf("Tool: %s", name)
 			log.Debugf("kiro-openai: tool '%s' has empty description, using default: %s", name, description)
+		}
+
+		// Rewrite web_search to the name Q's chat endpoint accepts
+		// (and use the live MCP description if we have one).
+		if newName, newDesc := kirocommon.RenameWebSearchTool(name, description); newName != name {
+			name, description = newName, newDesc
+			log.Debugf("kiro-openai: renamed tool web_search → %s", name)
 		}
 
 		// Truncate long descriptions
@@ -556,14 +357,6 @@ func processOpenAIMessages(messages gjson.Result, modelID, origin string) ([]Kir
 				currentUserMsg = &userMsg
 				currentToolResults = toolResults
 			} else {
-				// CRITICAL: Kiro API requires content to be non-empty for history messages
-				if strings.TrimSpace(userMsg.Content) == "" {
-					if len(toolResults) > 0 {
-						userMsg.Content = kirocommon.DefaultUserContentWithToolResults
-					} else {
-						userMsg.Content = kirocommon.DefaultUserContent
-					}
-				}
 				// For history messages, embed tool results in context
 				if len(toolResults) > 0 {
 					userMsg.UserInputMessageContext = &KiroUserInputMessageContext{
@@ -582,7 +375,7 @@ func processOpenAIMessages(messages gjson.Result, modelID, origin string) ([]Kir
 			// before this assistant message to maintain proper conversation structure
 			if len(pendingToolResults) > 0 {
 				syntheticUserMsg := KiroUserInputMessage{
-					Content: kirocommon.DefaultUserContentWithToolResults,
+					Content: "",
 					ModelID: modelID,
 					Origin:  origin,
 					UserInputMessageContext: &KiroUserInputMessageContext{
@@ -601,7 +394,7 @@ func processOpenAIMessages(messages gjson.Result, modelID, origin string) ([]Kir
 				})
 				// Create a continuation user message as currentMessage
 				currentUserMsg = &KiroUserInputMessage{
-					Content: kirocommon.DefaultUserContent,
+					Content: "",
 					ModelID: modelID,
 					Origin:  origin,
 				}
@@ -636,7 +429,7 @@ func processOpenAIMessages(messages gjson.Result, modelID, origin string) ([]Kir
 		// If there's no current user message, create a synthetic one for the tool results
 		if currentUserMsg == nil {
 			currentUserMsg = &KiroUserInputMessage{
-				Content: kirocommon.DefaultUserContentWithToolResults,
+				Content: "",
 				ModelID: modelID,
 				Origin:  origin,
 			}
@@ -858,10 +651,12 @@ func buildAssistantMessageFromOpenAI(msg gjson.Result) KiroAssistantResponseMess
 
 				toolUses = append(toolUses, KiroToolUse{
 					ToolUseID: toolUseID,
-					Name:      toolName,
+					Name:      kirocommon.RenameWebSearchToolUse(toolName),
 					Input:     inputMap,
 				})
 				log.Debugf("kiro-openai: extracted tool_use from content array: %s", toolName)
+			default:
+				log.Debugf("kiro-openai: dropping unsupported assistant content block type: %s", partType)
 			}
 		}
 	}
@@ -886,7 +681,7 @@ func buildAssistantMessageFromOpenAI(msg gjson.Result) KiroAssistantResponseMess
 
 			toolUses = append(toolUses, KiroToolUse{
 				ToolUseID: toolUseID,
-				Name:      toolName,
+				Name:      kirocommon.RenameWebSearchToolUse(toolName),
 				Input:     inputMap,
 			})
 		}
@@ -914,196 +709,13 @@ func buildAssistantMessageFromOpenAI(msg gjson.Result) KiroAssistantResponseMess
 func buildFinalContent(content, systemPrompt string, toolResults []KiroToolResult) string {
 	var contentBuilder strings.Builder
 
-	if systemPrompt != "" && kirocommon.IsSystemPromptInjectEnabled() {
-		contentBuilder.WriteString("--- SYSTEM PROMPT ---\n")
+	if systemPrompt != "" {
 		contentBuilder.WriteString(systemPrompt)
-		contentBuilder.WriteString("\n--- END SYSTEM PROMPT ---\n\n")
-		log.Debugf("kiro-openai: system prompt injected into user message content (len=%d)", len(systemPrompt))
-	} else if systemPrompt != "" {
-		log.Debugf("kiro-openai: system prompt dropped (inject disabled, len=%d)", len(systemPrompt))
-	} else {
-		log.Debugf("kiro-openai: no system prompt present")
+		contentBuilder.WriteString("\n\n")
 	}
 
 	contentBuilder.WriteString(content)
 	finalContent := contentBuilder.String()
 
-	// CRITICAL: Kiro API requires content to be non-empty
-	if strings.TrimSpace(finalContent) == "" {
-		if len(toolResults) > 0 {
-			finalContent = kirocommon.DefaultUserContentWithToolResults
-		} else {
-			finalContent = kirocommon.DefaultUserContent
-		}
-		log.Debugf("kiro-openai: content was empty, using default: %s", finalContent)
-	}
-
 	return finalContent
-}
-
-// checkThinkingModeFromOpenAI checks if thinking mode is enabled in the OpenAI request.
-// Returns thinkingEnabled.
-// Supports:
-// - reasoning_effort parameter (low/medium/high/auto)
-// - Model name containing "thinking" or "reason"
-// - <thinking_mode> tag in system prompt (AMP/Cursor format)
-func checkThinkingModeFromOpenAI(openaiBody []byte) bool {
-	return checkThinkingModeFromOpenAIWithHeaders(openaiBody, nil)
-}
-
-// checkThinkingModeFromOpenAIWithHeaders checks if thinking mode is enabled in the OpenAI request.
-// Returns thinkingEnabled.
-// Supports:
-// - Anthropic-Beta header with interleaved-thinking (Claude CLI)
-// - reasoning_effort parameter (low/medium/high/auto)
-// - Model name containing "thinking" or "reason"
-// - <thinking_mode> tag in system prompt (AMP/Cursor format)
-func checkThinkingModeFromOpenAIWithHeaders(openaiBody []byte, headers http.Header) bool {
-	// Check Anthropic-Beta header first (Claude CLI uses this)
-	if kiroclaude.IsThinkingEnabledFromHeader(headers) {
-		log.Debugf("kiro-openai: thinking mode enabled via Anthropic-Beta header")
-		return true
-	}
-
-	// Check OpenAI format: reasoning_effort parameter
-	// Valid values: "low", "medium", "high", "auto" (not "none")
-	reasoningEffort := gjson.GetBytes(openaiBody, "reasoning_effort")
-	if reasoningEffort.Exists() {
-		effort := reasoningEffort.String()
-		if effort != "" && effort != "none" {
-			log.Debugf("kiro-openai: thinking mode enabled via reasoning_effort: %s", effort)
-			return true
-		}
-	}
-
-	// Check AMP/Cursor format: <thinking_mode>interleaved</thinking_mode> in system prompt
-	bodyStr := string(openaiBody)
-	if strings.Contains(bodyStr, "<thinking_mode>") && strings.Contains(bodyStr, "</thinking_mode>") {
-		startTag := "<thinking_mode>"
-		endTag := "</thinking_mode>"
-		startIdx := strings.Index(bodyStr, startTag)
-		if startIdx >= 0 {
-			startIdx += len(startTag)
-			endIdx := strings.Index(bodyStr[startIdx:], endTag)
-			if endIdx >= 0 {
-				thinkingMode := bodyStr[startIdx : startIdx+endIdx]
-				if thinkingMode == "interleaved" || thinkingMode == "enabled" {
-					log.Debugf("kiro-openai: thinking mode enabled via AMP/Cursor format: %s", thinkingMode)
-					return true
-				}
-			}
-		}
-	}
-
-	// Check model name for thinking hints
-	model := gjson.GetBytes(openaiBody, "model").String()
-	modelLower := strings.ToLower(model)
-	if strings.Contains(modelLower, "thinking") || strings.Contains(modelLower, "-reason") {
-		log.Debugf("kiro-openai: thinking mode enabled via model name hint: %s", model)
-		return true
-	}
-
-	log.Debugf("kiro-openai: no thinking mode detected in OpenAI request")
-	return false
-}
-
-// hasThinkingTagInBody checks if the request body already contains thinking configuration tags.
-// This is used to prevent duplicate injection when client (e.g., AMP/Cursor) already includes thinking config.
-func hasThinkingTagInBody(body []byte) bool {
-	bodyStr := string(body)
-	return strings.Contains(bodyStr, "<thinking_mode>") || strings.Contains(bodyStr, "<max_thinking_length>")
-}
-
-// extractToolChoiceHint extracts tool_choice from OpenAI request and returns a system prompt hint.
-// OpenAI tool_choice values:
-// - "none": Don't use any tools
-// - "auto": Model decides (default, no hint needed)
-// - "required": Must use at least one tool
-// - {"type":"function","function":{"name":"..."}} : Must use specific tool
-func extractToolChoiceHint(openaiBody []byte) string {
-	toolChoice := gjson.GetBytes(openaiBody, "tool_choice")
-	if !toolChoice.Exists() {
-		return ""
-	}
-
-	// Handle string values
-	if toolChoice.Type == gjson.String {
-		switch toolChoice.String() {
-		case "none":
-			// Note: When tool_choice is "none", we should ideally not pass tools at all
-			// But since we can't modify tool passing here, we add a strong hint
-			return "[INSTRUCTION: Do NOT use any tools. Respond with text only.]"
-		case "required":
-			return "[INSTRUCTION: You MUST use at least one of the available tools to respond. Do not respond with text only - always make a tool call.]"
-		case "auto":
-			// Default behavior, no hint needed
-			return ""
-		}
-	}
-
-	// Handle object value: {"type":"function","function":{"name":"..."}}
-	if toolChoice.IsObject() {
-		if toolChoice.Get("type").String() == "function" {
-			toolName := toolChoice.Get("function.name").String()
-			if toolName != "" {
-				return fmt.Sprintf("[INSTRUCTION: You MUST use the tool named '%s' to respond. Do not use any other tool or respond with text only.]", toolName)
-			}
-		}
-	}
-
-	return ""
-}
-
-// extractResponseFormatHint extracts response_format from OpenAI request and returns a system prompt hint.
-// OpenAI response_format values:
-// - {"type": "text"}: Default, no hint needed
-// - {"type": "json_object"}: Must respond with valid JSON
-// - {"type": "json_schema", "json_schema": {...}}: Must respond with JSON matching schema
-func extractResponseFormatHint(openaiBody []byte) string {
-	responseFormat := gjson.GetBytes(openaiBody, "response_format")
-	if !responseFormat.Exists() {
-		return ""
-	}
-
-	formatType := responseFormat.Get("type").String()
-	switch formatType {
-	case "json_object":
-		return "[INSTRUCTION: You MUST respond with valid JSON only. Do not include any text before or after the JSON. Do not wrap the JSON in markdown code blocks. Output raw JSON directly.]"
-	case "json_schema":
-		// Extract schema if provided
-		schema := responseFormat.Get("json_schema.schema")
-		if schema.Exists() {
-			schemaStr := schema.Raw
-			// Truncate if too long
-			if len(schemaStr) > 500 {
-				schemaStr = schemaStr[:500] + "..."
-			}
-			return fmt.Sprintf("[INSTRUCTION: You MUST respond with valid JSON that matches this schema: %s. Do not include any text before or after the JSON. Do not wrap the JSON in markdown code blocks. Output raw JSON directly.]", schemaStr)
-		}
-		return "[INSTRUCTION: You MUST respond with valid JSON only. Do not include any text before or after the JSON. Do not wrap the JSON in markdown code blocks. Output raw JSON directly.]"
-	case "text":
-		// Default behavior, no hint needed
-		return ""
-	}
-
-	return ""
-}
-
-// deduplicateToolResults removes duplicate tool results
-func deduplicateToolResults(toolResults []KiroToolResult) []KiroToolResult {
-	if len(toolResults) == 0 {
-		return toolResults
-	}
-
-	seenIDs := make(map[string]bool)
-	unique := make([]KiroToolResult, 0, len(toolResults))
-	for _, tr := range toolResults {
-		if !seenIDs[tr.ToolUseID] {
-			seenIDs[tr.ToolUseID] = true
-			unique = append(unique, tr)
-		} else {
-			log.Debugf("kiro-openai: skipping duplicate toolResult: %s", tr.ToolUseID)
-		}
-	}
-	return unique
 }

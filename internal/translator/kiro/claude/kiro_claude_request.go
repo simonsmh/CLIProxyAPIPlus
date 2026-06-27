@@ -6,118 +6,36 @@ package claude
 import (
 	"encoding/json"
 	"fmt"
-	"net/http"
 	"strings"
-	"time"
 	"unicode/utf8"
 
 	"github.com/google/uuid"
+	"github.com/router-for-me/CLIProxyAPI/v7/internal/thinking"
 	kirocommon "github.com/router-for-me/CLIProxyAPI/v7/internal/translator/kiro/common"
 	log "github.com/sirupsen/logrus"
 	"github.com/tidwall/gjson"
 )
 
-// remoteWebSearchDescription is a minimal fallback for when dynamic fetch from MCP tools/list hasn't completed yet.
-const remoteWebSearchDescription = "WebSearch looks up information outside the model's training data. Supports multiple queries to gather comprehensive information."
-
-// Kiro API request structs - field order determines JSON key order
-
-// KiroPayload is the top-level request structure for Kiro API
-type KiroPayload struct {
-	ConversationState KiroConversationState `json:"conversationState"`
-	ProfileArn        string                `json:"profileArn,omitempty"`
-}
-
-// KiroConversationState holds the conversation context
-type KiroConversationState struct {
-	AgentContinuationID string               `json:"agentContinuationId,omitempty"`
-	AgentTaskType       string               `json:"agentTaskType,omitempty"`
-	ChatTriggerType     string               `json:"chatTriggerType"` // Required: "MANUAL"
-	ConversationID      string               `json:"conversationId"`
-	CurrentMessage      KiroCurrentMessage   `json:"currentMessage"`
-	History             []KiroHistoryMessage `json:"history,omitempty"`
-}
-
-// KiroCurrentMessage wraps the current user message
-type KiroCurrentMessage struct {
-	UserInputMessage KiroUserInputMessage `json:"userInputMessage"`
-}
-
-// KiroHistoryMessage represents a message in the conversation history
-type KiroHistoryMessage struct {
-	UserInputMessage         *KiroUserInputMessage         `json:"userInputMessage,omitempty"`
-	AssistantResponseMessage *KiroAssistantResponseMessage `json:"assistantResponseMessage,omitempty"`
-}
-
-// KiroImage represents an image in Kiro API format
-type KiroImage struct {
-	Format string          `json:"format"`
-	Source KiroImageSource `json:"source"`
-}
-
-// KiroImageSource contains the image data
-type KiroImageSource struct {
-	Bytes string `json:"bytes"` // base64 encoded image data
-}
-
-// KiroUserInputMessage represents a user message
-type KiroUserInputMessage struct {
-	Content                 string                       `json:"content"`
-	ModelID                 string                       `json:"modelId"`
-	Origin                  string                       `json:"origin"`
-	Images                  []KiroImage                  `json:"images,omitempty"`
-	UserInputMessageContext *KiroUserInputMessageContext `json:"userInputMessageContext,omitempty"`
-}
-
-// KiroUserInputMessageContext contains tool-related context
-type KiroUserInputMessageContext struct {
-	ToolResults []KiroToolResult  `json:"toolResults,omitempty"`
-	Tools       []KiroToolWrapper `json:"tools,omitempty"`
-}
-
-// KiroToolResult represents a tool execution result
-type KiroToolResult struct {
-	Content   []KiroTextContent `json:"content"`
-	Status    string            `json:"status"`
-	ToolUseID string            `json:"toolUseId"`
-}
-
-// KiroTextContent represents text content
-type KiroTextContent struct {
-	Text string `json:"text"`
-}
-
-// KiroToolWrapper wraps a tool specification
-type KiroToolWrapper struct {
-	ToolSpecification KiroToolSpecification `json:"toolSpecification"`
-}
-
-// KiroToolSpecification defines a tool's schema
-type KiroToolSpecification struct {
-	Name        string          `json:"name"`
-	Description string          `json:"description"`
-	InputSchema KiroInputSchema `json:"inputSchema"`
-}
-
-// KiroInputSchema wraps the JSON schema for tool input
-type KiroInputSchema struct {
-	JSON interface{} `json:"json"`
-}
-
-// KiroAssistantResponseMessage represents an assistant message
-type KiroAssistantResponseMessage struct {
-	Content  string        `json:"content"`
-	ToolUses []KiroToolUse `json:"toolUses,omitempty"`
-}
-
-// KiroToolUse represents a tool invocation by the assistant
-type KiroToolUse struct {
-	ToolUseID      string                 `json:"toolUseId"`
-	Name           string                 `json:"name"`
-	Input          map[string]interface{} `json:"input"`
-	IsTruncated    bool                   `json:"-"` // Set by truncation detector when enabled
-	TruncationInfo *TruncationInfo        `json:"-"` // Truncation details (nil when detector disabled)
-}
+type (
+	KiroPayload                      = kirocommon.KiroPayload
+	KiroConversationState            = kirocommon.KiroConversationState
+	KiroCurrentMessage               = kirocommon.KiroCurrentMessage
+	KiroHistoryMessage               = kirocommon.KiroHistoryMessage
+	KiroImage                        = kirocommon.KiroImage
+	KiroImageSource                  = kirocommon.KiroImageSource
+	KiroUserInputMessage             = kirocommon.KiroUserInputMessage
+	KiroUserInputMessageContext      = kirocommon.KiroUserInputMessageContext
+	KiroToolResult                   = kirocommon.KiroToolResult
+	KiroTextContent                  = kirocommon.KiroTextContent
+	KiroToolWrapper                  = kirocommon.KiroToolWrapper
+	KiroToolSpecification            = kirocommon.KiroToolSpecification
+	KiroInputSchema                  = kirocommon.KiroInputSchema
+	KiroAssistantResponseMessage     = kirocommon.KiroAssistantResponseMessage
+	KiroToolUse                      = kirocommon.KiroToolUse
+	KiroAdditionalModelRequestFields = kirocommon.KiroAdditionalModelRequestFields
+	KiroThinkingConfig               = kirocommon.KiroThinkingConfig
+	KiroOutputConfig                 = kirocommon.KiroOutputConfig
+)
 
 // ConvertClaudeRequestToKiro converts a Claude API request to Kiro format.
 // This is the main entry point for request translation.
@@ -131,93 +49,26 @@ func ConvertClaudeRequestToKiro(modelName string, inputRawJSON []byte, stream bo
 // BuildKiroPayload constructs the Kiro API request payload from Claude format.
 // Supports tool calling - tools are passed via userInputMessageContext.
 // origin parameter determines which quota to use: "CLI" for Amazon Q, "AI_EDITOR" for Kiro IDE.
-// isAgentic parameter enables chunked write optimization prompt for -agentic model variants.
-// isChatOnly parameter disables tool calling for -chat model variants (pure conversation mode).
-// headers parameter allows checking Anthropic-Beta header for thinking mode detection.
-// metadata parameter is kept for API compatibility but no longer used for thinking configuration.
-// Supports thinking mode - when enabled, injects thinking tags into system prompt.
-// Returns the payload and a boolean indicating whether thinking mode was injected.
-func BuildKiroPayload(claudeBody []byte, modelID, profileArn, origin string, isAgentic, isChatOnly bool, headers http.Header, metadata map[string]any) ([]byte, bool) {
-	log.Debugf("kiro: BuildKiroPayload called, modelID=%s, origin=%s, isAgentic=%v, isChatOnly=%v", modelID, origin, isAgentic, isChatOnly)
+// Returns the serialized Kiro API request payload.
+func BuildKiroPayload(claudeBody []byte, modelID, profileArn, origin string, requestedModel string) []byte {
+	log.Debugf("kiro: BuildKiroPayload called, modelID=%s, origin=%s, requestedModel=%s", modelID, origin, requestedModel)
 
 	// Normalize origin value for Kiro API compatibility
-	origin = normalizeOrigin(origin)
+	origin = kirocommon.NormalizeOrigin(origin)
 	log.Debugf("kiro: normalized origin value: %s", origin)
 
 	messages := gjson.GetBytes(claudeBody, "messages")
 
-	// For chat-only mode, don't include tools
-	var tools gjson.Result
-	if !isChatOnly {
-		tools = gjson.GetBytes(claudeBody, "tools")
-	}
+	tools := gjson.GetBytes(claudeBody, "tools")
 
 	// Extract system prompt
 	systemPrompt := extractSystemPrompt(claudeBody)
-
-	// Early exit: if system prompt injection is disabled, drop the client system prompt
-	// immediately to avoid unnecessary string building (timestamp, agentic, thinking tags, etc.)
-	if !kirocommon.IsSystemPromptInjectEnabled() {
-		if systemPrompt != "" {
-			log.Debugf("kiro: system prompt injection disabled, dropping system prompt (len=%d)", len(systemPrompt))
-		}
-		systemPrompt = ""
-	}
-
-	// Check for thinking mode using the comprehensive IsThinkingEnabledWithHeaders function
-	// This supports Claude API format, OpenAI reasoning_effort, AMP/Cursor format, and Anthropic-Beta header
-	thinkingEnabled := IsThinkingEnabledWithHeaders(claudeBody, headers)
-
-	// Inject timestamp context
-	timestamp := time.Now().Format("2006-01-02 15:04:05 MST")
-	timestampContext := fmt.Sprintf("[Context: Current time is %s]", timestamp)
-	if systemPrompt != "" {
-		systemPrompt = timestampContext + "\n\n" + systemPrompt
-	} else {
-		systemPrompt = timestampContext
-	}
-	log.Debugf("kiro: injected timestamp context: %s", timestamp)
-
-	// Inject agentic optimization prompt for -agentic model variants
-	if isAgentic {
-		if systemPrompt != "" {
-			systemPrompt += "\n"
-		}
-		systemPrompt += kirocommon.KiroAgenticSystemPrompt
-	}
-
-	// Handle tool_choice parameter - Kiro doesn't support it natively, so we inject system prompt hints
-	// Claude tool_choice values: {"type": "auto/any/tool", "name": "..."}
-	toolChoiceHint := extractClaudeToolChoiceHint(claudeBody)
-	if toolChoiceHint != "" {
-		if systemPrompt != "" {
-			systemPrompt += "\n"
-		}
-		systemPrompt += toolChoiceHint
-		log.Debugf("kiro: injected tool_choice hint into system prompt")
-	}
 
 	// Convert Claude tools to Kiro format
 	kiroTools := convertClaudeToolsToKiro(tools)
 	log.Infof("kiro: tools conversion: input_exist=%v, output_count=%d", tools.IsArray(), len(kiroTools))
 	for i, t := range kiroTools {
 		log.Debugf("kiro: tool[%d]: name=%s", i, t.ToolSpecification.Name)
-	}
-
-	// Thinking mode implementation:
-	// Kiro API supports official thinking/reasoning mode via <thinking_mode> tag.
-	// When set to "enabled", Kiro returns reasoning content as official reasoningContentEvent
-	// rather than inline <thinking> tags in assistantResponseEvent.
-	// We cap max_thinking_length to reserve space for tool outputs and prevent truncation.
-	if thinkingEnabled {
-		thinkingHint := `<thinking_mode>enabled</thinking_mode>
-<max_thinking_length>16000</max_thinking_length>`
-		if systemPrompt != "" {
-			systemPrompt = thinkingHint + "\n\n" + systemPrompt
-		} else {
-			systemPrompt = thinkingHint
-		}
-		log.Infof("kiro: injected thinking prompt (official mode), has_tools: %v", len(kiroTools) > 0)
 	}
 
 	// Process messages and build history
@@ -230,7 +81,7 @@ func BuildKiroPayload(claudeBody []byte, modelID, profileArn, origin string, isA
 		currentUserMsg.Content = buildFinalContent(currentUserMsg.Content, systemPrompt, currentToolResults)
 
 		// Deduplicate currentToolResults
-		currentToolResults = deduplicateToolResults(currentToolResults)
+		currentToolResults = kirocommon.DeduplicateToolResults(currentToolResults)
 
 		// Build userInputMessageContext with tools and tool results.
 		//
@@ -245,8 +96,8 @@ func BuildKiroPayload(claudeBody []byte, modelID, profileArn, origin string, isA
 		// To stay robust to those clients, synthesize minimal stub tool specs
 		// from the names referenced in history whenever the client didn't
 		// provide tools but history references them.
-		if len(kiroTools) == 0 && !isChatOnly {
-			kiroTools = synthesizeToolSpecsFromHistory(history)
+		if len(kiroTools) == 0 {
+			kiroTools = kirocommon.SynthesizeToolSpecsFromHistory(history)
 			if len(kiroTools) > 0 {
 				log.Infof("kiro: synthesized %d stub tool spec(s) from history (client did not send tools)", len(kiroTools))
 			}
@@ -265,20 +116,10 @@ func BuildKiroPayload(claudeBody []byte, modelID, profileArn, origin string, isA
 		currentMessage = KiroCurrentMessage{UserInputMessage: *currentUserMsg}
 	} else {
 		fallbackContent := ""
-		if systemPrompt != "" && kirocommon.IsSystemPromptInjectEnabled() {
-			fallbackContent = "--- SYSTEM PROMPT ---\n" + systemPrompt + "\n--- END SYSTEM PROMPT ---\n"
-			log.Debugf("kiro: system prompt injected into fallback user message (len=%d)", len(systemPrompt))
-		} else if systemPrompt != "" {
-			log.Debugf("kiro: system prompt dropped (inject disabled, len=%d)", len(systemPrompt))
+		if systemPrompt != "" {
+			fallbackContent = systemPrompt
 		} else {
 			log.Debugf("kiro: no system prompt present in fallback user message")
-		}
-		// CRITICAL: Kiro API requires non-empty content for currentMessage.
-		// When system prompt injection is disabled, fallbackContent is empty.
-		// Use DefaultUserContent to avoid "Improperly formed request" 400 error.
-		if strings.TrimSpace(fallbackContent) == "" {
-			fallbackContent = kirocommon.DefaultUserContent
-			log.Debugf("kiro: fallback user message content was empty, using default: %s", fallbackContent)
 		}
 		currentMessage = KiroCurrentMessage{UserInputMessage: KiroUserInputMessage{
 			Content: fallbackContent,
@@ -288,10 +129,64 @@ func BuildKiroPayload(claudeBody []byte, modelID, profileArn, origin string, isA
 	}
 
 	// Session IDs: extract from messages[].additional_kwargs (LangChain format) or random
-	conversationID := extractMetadataFromMessages(messages, "conversationId")
-	continuationID := extractMetadataFromMessages(messages, "continuationId")
+	conversationID := kirocommon.ExtractMetadataFromMessages(messages, "conversationId")
+	continuationID := kirocommon.ExtractMetadataFromMessages(messages, "continuationId")
 	if conversationID == "" {
 		conversationID = uuid.New().String()
+	}
+
+	// Extract thinking config only from the request body
+	config := thinking.ExtractThinkingConfigPublic(claudeBody, "claude")
+
+	// Build additionalModelRequestFields if target model is not "auto"
+	var additionalFields *KiroAdditionalModelRequestFields
+	if modelID != "auto" {
+		if config.Mode == thinking.ModeLevel && config.Level != "" {
+			levelStr := strings.ToLower(strings.TrimSpace(string(config.Level)))
+			if levelStr == "minimal" {
+				levelStr = "low"
+			}
+			if levelStr == "auto" {
+				additionalFields = &KiroAdditionalModelRequestFields{
+					Thinking: &KiroThinkingConfig{Type: "adaptive"},
+				}
+			} else if levelStr == "none" {
+				additionalFields = &KiroAdditionalModelRequestFields{
+					Thinking: &KiroThinkingConfig{Type: "disabled"},
+				}
+			} else if levelStr == "low" || levelStr == "medium" || levelStr == "high" || levelStr == "xhigh" || levelStr == "max" {
+				additionalFields = &KiroAdditionalModelRequestFields{
+					Thinking:     &KiroThinkingConfig{Type: "adaptive"},
+					OutputConfig: &KiroOutputConfig{Effort: levelStr},
+				}
+			}
+		} else if config.Mode == thinking.ModeBudget {
+			levelStr, ok := thinking.ConvertBudgetToLevel(config.Budget)
+			if ok {
+				levelStr = strings.ToLower(strings.TrimSpace(levelStr))
+				if levelStr == "minimal" {
+					levelStr = "low"
+				}
+				if levelStr == "none" {
+					additionalFields = &KiroAdditionalModelRequestFields{
+						Thinking: &KiroThinkingConfig{Type: "disabled"},
+					}
+				} else if levelStr == "low" || levelStr == "medium" || levelStr == "high" || levelStr == "xhigh" || levelStr == "max" {
+					additionalFields = &KiroAdditionalModelRequestFields{
+						Thinking:     &KiroThinkingConfig{Type: "adaptive"},
+						OutputConfig: &KiroOutputConfig{Effort: levelStr},
+					}
+				}
+			}
+		} else if config.Mode == thinking.ModeNone {
+			additionalFields = &KiroAdditionalModelRequestFields{
+				Thinking: &KiroThinkingConfig{Type: "disabled"},
+			}
+		} else if config.Mode == thinking.ModeAuto {
+			additionalFields = &KiroAdditionalModelRequestFields{
+				Thinking: &KiroThinkingConfig{Type: "adaptive"},
+			}
+		}
 	}
 
 	payload := KiroPayload{
@@ -302,7 +197,9 @@ func BuildKiroPayload(claudeBody []byte, modelID, profileArn, origin string, isA
 			CurrentMessage:  currentMessage,
 			History:         history,
 		},
-		ProfileArn: profileArn,
+		ProfileArn:                   profileArn,
+		AgentMode:                    "vibe",
+		AdditionalModelRequestFields: additionalFields,
 	}
 
 	// Only set AgentContinuationID if client provided
@@ -313,38 +210,10 @@ func BuildKiroPayload(claudeBody []byte, modelID, profileArn, origin string, isA
 	result, err := json.Marshal(payload)
 	if err != nil {
 		log.Debugf("kiro: failed to marshal payload: %v", err)
-		return nil, false
+		return nil
 	}
 
-	return result, thinkingEnabled
-}
-
-// normalizeOrigin normalizes origin value for Kiro API compatibility
-func normalizeOrigin(origin string) string {
-	switch origin {
-	case "KIRO_CLI":
-		return "CLI"
-	case "KIRO_AI_EDITOR":
-		return "AI_EDITOR"
-	case "AMAZON_Q":
-		return "CLI"
-	case "KIRO_IDE":
-		return "AI_EDITOR"
-	default:
-		return origin
-	}
-}
-
-// extractMetadataFromMessages extracts metadata from messages[].additional_kwargs (LangChain format).
-// Searches from the last message backwards, returns empty string if not found.
-func extractMetadataFromMessages(messages gjson.Result, key string) string {
-	arr := messages.Array()
-	for i := len(arr) - 1; i >= 0; i-- {
-		if val := arr[i].Get("additional_kwargs." + key); val.Exists() && val.String() != "" {
-			return val.String()
-		}
-	}
-	return ""
+	return result
 }
 
 // extractSystemPrompt extracts system prompt from Claude request
@@ -364,221 +233,6 @@ func extractSystemPrompt(claudeBody []byte) string {
 	return systemField.String()
 }
 
-// checkThinkingMode checks if thinking mode is enabled in the Claude request
-func checkThinkingMode(claudeBody []byte) (bool, int64) {
-	thinkingEnabled := false
-	var budgetTokens int64 = 24000
-
-	thinkingField := gjson.GetBytes(claudeBody, "thinking")
-	if thinkingField.Exists() {
-		thinkingType := thinkingField.Get("type").String()
-		if thinkingType == "enabled" {
-			thinkingEnabled = true
-			if bt := thinkingField.Get("budget_tokens"); bt.Exists() {
-				budgetTokens = bt.Int()
-				if budgetTokens <= 0 {
-					thinkingEnabled = false
-					log.Debugf("kiro: thinking mode disabled via budget_tokens <= 0")
-				}
-			}
-			if thinkingEnabled {
-				log.Debugf("kiro: thinking mode enabled via Claude API parameter, budget_tokens: %d", budgetTokens)
-			}
-		}
-	}
-
-	return thinkingEnabled, budgetTokens
-}
-
-// hasThinkingTagInBody checks if the request body already contains thinking configuration tags.
-// This is used to prevent duplicate injection when client (e.g., AMP/Cursor) already includes thinking config.
-func hasThinkingTagInBody(body []byte) bool {
-	bodyStr := string(body)
-	return strings.Contains(bodyStr, "<thinking_mode>") || strings.Contains(bodyStr, "<max_thinking_length>")
-}
-
-// IsThinkingEnabledFromHeader checks if thinking mode is enabled via Anthropic-Beta header.
-// Claude CLI uses "Anthropic-Beta: interleaved-thinking-2025-05-14" to enable thinking.
-func IsThinkingEnabledFromHeader(headers http.Header) bool {
-	if headers == nil {
-		return false
-	}
-	betaHeader := headers.Get("Anthropic-Beta")
-	if betaHeader == "" {
-		return false
-	}
-	// Check for interleaved-thinking beta feature
-	if strings.Contains(betaHeader, "interleaved-thinking") {
-		log.Debugf("kiro: thinking mode enabled via Anthropic-Beta header: %s", betaHeader)
-		return true
-	}
-	return false
-}
-
-// IsThinkingEnabled is a public wrapper to check if thinking mode is enabled.
-// This is used by the executor to determine whether to parse <thinking> tags in responses.
-// When thinking is NOT enabled in the request, <thinking> tags in responses should be
-// treated as regular text content, not as thinking blocks.
-//
-// Supports multiple formats:
-// - Claude API format: thinking.type = "enabled"
-// - OpenAI format: reasoning_effort parameter
-// - AMP/Cursor format: <thinking_mode>interleaved</thinking_mode> in system prompt
-func IsThinkingEnabled(body []byte) bool {
-	return IsThinkingEnabledWithHeaders(body, nil)
-}
-
-// IsThinkingEnabledWithHeaders checks if thinking mode is enabled from body or headers.
-// This is the comprehensive check that supports all thinking detection methods:
-// - Claude API format: thinking.type = "enabled"
-// - OpenAI format: reasoning_effort parameter
-// - AMP/Cursor format: <thinking_mode>interleaved</thinking_mode> in system prompt
-// - Anthropic-Beta header: interleaved-thinking-2025-05-14
-func IsThinkingEnabledWithHeaders(body []byte, headers http.Header) bool {
-	// Check Anthropic-Beta header first (Claude Code uses this)
-	if IsThinkingEnabledFromHeader(headers) {
-		return true
-	}
-
-	// Check Claude API format first (thinking.type = "enabled")
-	enabled, _ := checkThinkingMode(body)
-	if enabled {
-		log.Debugf("kiro: IsThinkingEnabled returning true (Claude API format)")
-		return true
-	}
-
-	// Check OpenAI format: reasoning_effort parameter
-	// Valid values: "low", "medium", "high", "auto" (not "none")
-	reasoningEffort := gjson.GetBytes(body, "reasoning_effort")
-	if reasoningEffort.Exists() {
-		effort := reasoningEffort.String()
-		if effort != "" && effort != "none" {
-			log.Debugf("kiro: thinking mode enabled via OpenAI reasoning_effort: %s", effort)
-			return true
-		}
-	}
-
-	// Check AMP/Cursor format: <thinking_mode>interleaved</thinking_mode> in system prompt
-	// This is how AMP client passes thinking configuration
-	bodyStr := string(body)
-	if strings.Contains(bodyStr, "<thinking_mode>") && strings.Contains(bodyStr, "</thinking_mode>") {
-		// Extract thinking mode value
-		startTag := "<thinking_mode>"
-		endTag := "</thinking_mode>"
-		startIdx := strings.Index(bodyStr, startTag)
-		if startIdx >= 0 {
-			startIdx += len(startTag)
-			endIdx := strings.Index(bodyStr[startIdx:], endTag)
-			if endIdx >= 0 {
-				thinkingMode := bodyStr[startIdx : startIdx+endIdx]
-				if thinkingMode == "interleaved" || thinkingMode == "enabled" {
-					log.Debugf("kiro: thinking mode enabled via AMP/Cursor format: %s", thinkingMode)
-					return true
-				}
-			}
-		}
-	}
-
-	// Check OpenAI format: max_completion_tokens with reasoning (o1-style)
-	// Some clients use this to indicate reasoning mode
-	if gjson.GetBytes(body, "max_completion_tokens").Exists() {
-		// If max_completion_tokens is set, check if model name suggests reasoning
-		model := gjson.GetBytes(body, "model").String()
-		if strings.Contains(strings.ToLower(model), "thinking") ||
-			strings.Contains(strings.ToLower(model), "reason") {
-			log.Debugf("kiro: thinking mode enabled via model name hint: %s", model)
-			return true
-		}
-	}
-
-	// Check model name directly for thinking hints.
-	// This enables thinking variants even when clients don't send explicit thinking fields.
-	model := strings.TrimSpace(gjson.GetBytes(body, "model").String())
-	modelLower := strings.ToLower(model)
-	if strings.Contains(modelLower, "thinking") || strings.Contains(modelLower, "-reason") {
-		log.Debugf("kiro: thinking mode enabled via model name hint: %s", model)
-		return true
-	}
-
-	log.Debugf("kiro: IsThinkingEnabled returning false (no thinking mode detected)")
-	return false
-}
-
-// shortenToolNameIfNeeded shortens tool names that exceed 64 characters.
-// MCP tools often have long names like "mcp__server-name__tool-name".
-// This preserves the "mcp__" prefix and last segment when possible.
-func shortenToolNameIfNeeded(name string) string {
-	const limit = 64
-	if len(name) <= limit {
-		return name
-	}
-	// For MCP tools, try to preserve prefix and last segment
-	if strings.HasPrefix(name, "mcp__") {
-		idx := strings.LastIndex(name, "__")
-		if idx > 0 {
-			cand := "mcp__" + name[idx+2:]
-			if len(cand) > limit {
-				return cand[:limit]
-			}
-			return cand
-		}
-	}
-	return name[:limit]
-}
-
-func ensureKiroInputSchema(parameters interface{}) interface{} {
-	if parameters != nil {
-		return parameters
-	}
-	return map[string]interface{}{
-		"type":       "object",
-		"properties": map[string]interface{}{},
-	}
-}
-
-// synthesizeToolSpecsFromHistory builds a minimal set of stub KiroToolWrapper
-// entries from any toolUse names referenced in history. This is the fallback
-// path used when the client request does not include the `tools` array but
-// history contains tool turns — Kiro's schema validator rejects such payloads
-// with "Improperly formed request" unless tools is non-empty.
-//
-// The synthesized spec is intentionally permissive: schema is an open object
-// (any properties allowed) and the description is a generic placeholder. The
-// real schema does not matter here because Kiro only uses tools to decide
-// what the model is allowed to call going forward, and the history toolUses
-// are already serialized JSON.
-func synthesizeToolSpecsFromHistory(history []KiroHistoryMessage) []KiroToolWrapper {
-	if len(history) == 0 {
-		return nil
-	}
-	seen := make(map[string]bool)
-	var stubs []KiroToolWrapper
-	for _, h := range history {
-		if h.AssistantResponseMessage == nil {
-			continue
-		}
-		for _, tu := range h.AssistantResponseMessage.ToolUses {
-			name := strings.TrimSpace(tu.Name)
-			if name == "" || seen[name] {
-				continue
-			}
-			seen[name] = true
-			stubs = append(stubs, KiroToolWrapper{
-				ToolSpecification: KiroToolSpecification{
-					Name:        shortenToolNameIfNeeded(name),
-					Description: fmt.Sprintf("Tool: %s", name),
-					InputSchema: KiroInputSchema{JSON: map[string]interface{}{
-						"type":                 "object",
-						"properties":           map[string]interface{}{},
-						"additionalProperties": true,
-					}},
-				},
-			})
-		}
-	}
-	return stubs
-}
-
 // convertClaudeToolsToKiro converts Claude tools to Kiro format
 func convertClaudeToolsToKiro(tools gjson.Result) []KiroToolWrapper {
 	var kiroTools []KiroToolWrapper
@@ -594,11 +248,11 @@ func convertClaudeToolsToKiro(tools gjson.Result) []KiroToolWrapper {
 		if inputSchemaResult.Exists() && inputSchemaResult.Type != gjson.Null {
 			inputSchema = inputSchemaResult.Value()
 		}
-		inputSchema = ensureKiroInputSchema(inputSchema)
+		inputSchema = kirocommon.EnsureKiroInputSchema(inputSchema)
 
 		// Shorten tool name if it exceeds 64 characters (common with MCP tools)
 		originalName := name
-		name = shortenToolNameIfNeeded(name)
+		name = kirocommon.ShortenToolNameIfNeeded(name)
 		if name != originalName {
 			log.Debugf("kiro: shortened tool name from '%s' to '%s'", originalName, name)
 		}
@@ -609,16 +263,11 @@ func convertClaudeToolsToKiro(tools gjson.Result) []KiroToolWrapper {
 			log.Debugf("kiro: tool '%s' has empty description, using default: %s", name, description)
 		}
 
-		// Rename web_search → remote_web_search for Kiro API compatibility
-		if name == "web_search" {
-			name = "remote_web_search"
-			// Prefer dynamically fetched description, fall back to hardcoded constant
-			if cached := GetWebSearchDescription(); cached != "" {
-				description = cached
-			} else {
-				description = remoteWebSearchDescription
-			}
-			log.Debugf("kiro: renamed tool web_search → remote_web_search")
+		// Rewrite web_search to the name Q's chat endpoint accepts
+		// (and use the live MCP description if we have one).
+		if newName, newDesc := kirocommon.RenameWebSearchTool(name, description); newName != name {
+			name, description = newName, newDesc
+			log.Debugf("kiro: renamed tool web_search → %s", name)
 		}
 
 		// Truncate long descriptions (individual tool limit)
@@ -667,18 +316,6 @@ func processMessages(messages gjson.Result, modelID, origin string) ([]KiroHisto
 
 		if role == "user" {
 			userMsg, toolResults := BuildUserMessageStruct(msg, modelID, origin)
-			// CRITICAL: Kiro API requires content to be non-empty for ALL user messages
-			// This includes both history messages and the current message.
-			// When user message contains only tool_result (no text), content will be empty.
-			// This commonly happens in compaction requests from OpenCode.
-			if strings.TrimSpace(userMsg.Content) == "" {
-				if len(toolResults) > 0 {
-					userMsg.Content = kirocommon.DefaultUserContentWithToolResults
-				} else {
-					userMsg.Content = kirocommon.DefaultUserContent
-				}
-				log.Debugf("kiro: user content was empty, using default: %s", userMsg.Content)
-			}
 			if isLastMessage {
 				currentUserMsg = &userMsg
 				currentToolResults = toolResults
@@ -701,7 +338,7 @@ func processMessages(messages gjson.Result, modelID, origin string) ([]KiroHisto
 				})
 				// Create a continuation user message as currentMessage
 				currentUserMsg = &KiroUserInputMessage{
-					Content: kirocommon.DefaultUserContent,
+					Content: "",
 					ModelID: modelID,
 					Origin:  origin,
 				}
@@ -772,78 +409,15 @@ func processMessages(messages gjson.Result, modelID, origin string) ([]KiroHisto
 func buildFinalContent(content, systemPrompt string, toolResults []KiroToolResult) string {
 	var contentBuilder strings.Builder
 
-	if systemPrompt != "" && kirocommon.IsSystemPromptInjectEnabled() {
-		contentBuilder.WriteString("--- SYSTEM PROMPT ---\n")
+	if systemPrompt != "" {
 		contentBuilder.WriteString(systemPrompt)
-		contentBuilder.WriteString("\n--- END SYSTEM PROMPT ---\n\n")
-		log.Debugf("kiro: system prompt injected into user message content (len=%d)", len(systemPrompt))
-	} else if systemPrompt != "" {
-		log.Debugf("kiro: system prompt dropped (inject disabled, len=%d)", len(systemPrompt))
-	} else {
-		log.Debugf("kiro: no system prompt present")
+		contentBuilder.WriteString("\n\n")
 	}
 
 	contentBuilder.WriteString(content)
 	finalContent := contentBuilder.String()
 
-	// CRITICAL: Kiro API requires content to be non-empty
-	if strings.TrimSpace(finalContent) == "" {
-		if len(toolResults) > 0 {
-			finalContent = kirocommon.DefaultUserContentWithToolResults
-		} else {
-			finalContent = kirocommon.DefaultUserContent
-		}
-		log.Debugf("kiro: content was empty, using default: %s", finalContent)
-	}
-
 	return finalContent
-}
-
-// deduplicateToolResults removes duplicate tool results
-func deduplicateToolResults(toolResults []KiroToolResult) []KiroToolResult {
-	if len(toolResults) == 0 {
-		return toolResults
-	}
-
-	seenIDs := make(map[string]bool)
-	unique := make([]KiroToolResult, 0, len(toolResults))
-	for _, tr := range toolResults {
-		if !seenIDs[tr.ToolUseID] {
-			seenIDs[tr.ToolUseID] = true
-			unique = append(unique, tr)
-		} else {
-			log.Debugf("kiro: skipping duplicate toolResult in currentMessage: %s", tr.ToolUseID)
-		}
-	}
-	return unique
-}
-
-// extractClaudeToolChoiceHint extracts tool_choice from Claude request and returns a system prompt hint.
-// Claude tool_choice values:
-// - {"type": "auto"}: Model decides (default, no hint needed)
-// - {"type": "any"}: Must use at least one tool
-// - {"type": "tool", "name": "..."}: Must use specific tool
-func extractClaudeToolChoiceHint(claudeBody []byte) string {
-	toolChoice := gjson.GetBytes(claudeBody, "tool_choice")
-	if !toolChoice.Exists() {
-		return ""
-	}
-
-	toolChoiceType := toolChoice.Get("type").String()
-	switch toolChoiceType {
-	case "any":
-		return "[INSTRUCTION: You MUST use at least one of the available tools to respond. Do not respond with text only - always make a tool call.]"
-	case "tool":
-		toolName := toolChoice.Get("name").String()
-		if toolName != "" {
-			return fmt.Sprintf("[INSTRUCTION: You MUST use the tool named '%s' to respond. Do not use any other tool or respond with text only.]", toolName)
-		}
-	case "auto":
-		// Default behavior, no hint needed
-		return ""
-	}
-
-	return ""
 }
 
 // BuildUserMessageStruct builds a user message and extracts tool results
@@ -965,16 +539,16 @@ func BuildAssistantMessageStruct(msg gjson.Result) KiroAssistantResponseMessage 
 					})
 				}
 
-				// Rename web_search → remote_web_search to match convertClaudeToolsToKiro
-				if toolName == "web_search" {
-					toolName = "remote_web_search"
-				}
+				// Match the rename done in convertClaudeToolsToKiro
+				toolName = kirocommon.RenameWebSearchToolUse(toolName)
 
 				toolUses = append(toolUses, KiroToolUse{
 					ToolUseID: toolUseID,
 					Name:      toolName,
 					Input:     inputMap,
 				})
+			default:
+				log.Debugf("kiro: dropping unsupported assistant content block type: %s", partType)
 			}
 		}
 	} else {
@@ -999,4 +573,3 @@ func BuildAssistantMessageStruct(msg gjson.Result) KiroAssistantResponseMessage 
 		ToolUses: toolUses,
 	}
 }
-

@@ -20,7 +20,6 @@ import (
 	"github.com/router-for-me/CLIProxyAPI/v7/internal/redisqueue"
 	"github.com/router-for-me/CLIProxyAPI/v7/internal/registry"
 	"github.com/router-for-me/CLIProxyAPI/v7/internal/runtime/executor"
-	kirocommon "github.com/router-for-me/CLIProxyAPI/v7/internal/translator/kiro/common"
 	internalusage "github.com/router-for-me/CLIProxyAPI/v7/internal/usage"
 	"github.com/router-for-me/CLIProxyAPI/v7/internal/util"
 	"github.com/router-for-me/CLIProxyAPI/v7/internal/watcher"
@@ -446,13 +445,6 @@ func newDefaultAuthManager() *sdkAuth.Manager {
 		sdkAuth.NewXAIAuthenticator(),
 		sdkAuth.NewGitLabAuthenticator(),
 	)
-}
-
-func applyKiroRuntimeConfig(cfg *config.Config) {
-	kiroauth.InitRateLimiterConfig(cfg)
-	kiroauth.InitSystemPromptInjectConfig(cfg)
-	kiroauth.InitTruncationDetectorConfig(cfg)
-	kiroauth.InitExtractThinkingTagConfig(cfg)
 }
 
 func (s *Service) ensureAuthUpdateQueue(ctx context.Context) {
@@ -1481,7 +1473,6 @@ func (s *Service) Run(ctx context.Context) error {
 	}
 
 	s.applyRetryConfig(s.cfg)
-	applyKiroRuntimeConfig(s.cfg)
 
 	s.registerPluginAuthParser()
 	if s.coreManager != nil && !homeEnabled {
@@ -1870,11 +1861,6 @@ func (s *Service) registerModelsForAuth(ctx context.Context, a *coreauth.Auth) {
 		models = applyExcludedModels(models, excluded)
 	case "kiro":
 		models = s.fetchKiroModels(a)
-		// Filter out agentic variants when system prompt injection is disabled,
-		// since the agentic prompt is delivered through system prompt injection.
-		if !kirocommon.IsSystemPromptInjectEnabled() {
-			models = filterAgenticVariants(models)
-		}
 		models = applyExcludedModels(models, excluded)
 	case "kilo":
 		models = executor.FetchKiloModels(context.Background(), a, s.cfg)
@@ -2585,8 +2571,8 @@ func (s *Service) fetchKiroModels(a *coreauth.Auth) []*ModelInfo {
 
 	// Extract token data from auth attributes
 	tokenData := s.extractKiroTokenData(a)
-	if tokenData == nil || tokenData.AccessToken == "" {
-		log.Debug("kiro: no valid token data in auth, using static models")
+	if tokenData == nil || tokenData.AccessToken == "" || tokenData.ProfileArn == "" {
+		log.Debug("kiro: no valid token or profile ARN in auth, using static models")
 		return registry.GetKiroModels()
 	}
 
@@ -2616,16 +2602,7 @@ func (s *Service) fetchKiroModels(a *coreauth.Auth) []*ModelInfo {
 	// Convert API models to ModelInfo
 	models := convertKiroAPIModels(apiModels)
 
-	baseCount := len(models)
-
-	// Generate agentic variants (only when kiro-system-prompt-inject-enable is on).
-	models = generateKiroAgenticVariants(models)
-
-	if len(models) > baseCount {
-		log.Infof("kiro: fetched %d models from API (+%d agentic variants)", baseCount, len(models)-baseCount)
-	} else {
-		log.Infof("kiro: fetched %d models from API", baseCount)
-	}
+	log.Infof("kiro: fetched %d models from API", len(models))
 	return models
 }
 
@@ -2636,13 +2613,15 @@ func (s *Service) extractKiroTokenData(a *coreauth.Auth) *kiroauth.KiroTokenData
 		return nil
 	}
 
-	var accessToken, profileArn, refreshToken string
+	var accessToken, profileArn, refreshToken, authMethod, region string
 
 	// Priority 1: Try to get from Attributes (config.yaml source)
 	if a.Attributes != nil {
 		accessToken = strings.TrimSpace(a.Attributes["access_token"])
 		profileArn = strings.TrimSpace(a.Attributes["profile_arn"])
 		refreshToken = strings.TrimSpace(a.Attributes["refresh_token"])
+		authMethod = strings.TrimSpace(a.Attributes["auth_method"])
+		region = strings.TrimSpace(a.Attributes["region"])
 	}
 
 	// Priority 2: If not found in Attributes, try Metadata (JSON file source)
@@ -2656,6 +2635,12 @@ func (s *Service) extractKiroTokenData(a *coreauth.Auth) *kiroauth.KiroTokenData
 		if rt, ok := a.Metadata["refresh_token"].(string); ok {
 			refreshToken = strings.TrimSpace(rt)
 		}
+		if am, ok := a.Metadata["auth_method"].(string); ok {
+			authMethod = strings.TrimSpace(am)
+		}
+		if r, ok := a.Metadata["region"].(string); ok {
+			region = strings.TrimSpace(r)
+		}
 	}
 
 	// access_token is required
@@ -2663,10 +2648,18 @@ func (s *Service) extractKiroTokenData(a *coreauth.Auth) *kiroauth.KiroTokenData
 		return nil
 	}
 
+	// Fallback to AWS Builder ID shared profile ARN if empty
+	if profileArn == "" {
+		profileArn = kiroauth.DefaultBuilderIDProfileArn
+		log.Debug("kiro: empty profileArn, defaulting to AWS Builder ID shared profile ARN")
+	}
+
 	return &kiroauth.KiroTokenData{
 		AccessToken:  accessToken,
 		ProfileArn:   profileArn,
 		RefreshToken: refreshToken,
+		AuthMethod:   authMethod,
+		Region:       region,
 	}
 }
 
@@ -2738,80 +2731,4 @@ func formatKiroDisplayName(modelName string, rateMultiplier float64) string {
 	}
 
 	return displayName
-}
-
-// filterAgenticVariants removes -agentic model variants from the list.
-// Used when system prompt injection is disabled, since the agentic prompt
-// is delivered via system prompt injection and would have no effect.
-func filterAgenticVariants(models []*ModelInfo) []*ModelInfo {
-	result := make([]*ModelInfo, 0, len(models))
-	for _, m := range models {
-		if m != nil && strings.HasSuffix(m.ID, "-agentic") {
-			continue
-		}
-		result = append(result, m)
-	}
-	return result
-}
-
-// generateKiroAgenticVariants generates agentic variants for Kiro models.
-// Agentic variants share the backend model ID but apply a wrapped system
-// prompt for coding agents — that wrapping only happens when
-// kiro-system-prompt-inject-enable is on. When it's off, exposing "-agentic"
-// IDs in /v1/models is misleading (the flag gates the actual behavior), so
-// we return the input list unchanged.
-func generateKiroAgenticVariants(models []*ModelInfo) []*ModelInfo {
-	if len(models) == 0 {
-		return models
-	}
-
-	if !kirocommon.IsSystemPromptInjectEnabled() {
-		return models
-	}
-
-	result := make([]*ModelInfo, 0, len(models)*2)
-	result = append(result, models...)
-
-	for _, m := range models {
-		if m == nil {
-			continue
-		}
-
-		// Skip if already an agentic variant
-		if strings.HasSuffix(m.ID, "-agentic") {
-			continue
-		}
-
-		// Skip auto models from agentic variant generation
-		if strings.Contains(m.ID, "-auto") {
-			continue
-		}
-
-		// Create agentic variant
-		agentic := &ModelInfo{
-			ID:                  m.ID + "-agentic",
-			Object:              m.Object,
-			Created:             m.Created,
-			OwnedBy:             m.OwnedBy,
-			Type:                m.Type,
-			DisplayName:         m.DisplayName + " (Agentic)",
-			Description:         m.Description + " - Optimized for coding agents (chunked writes)",
-			ContextLength:       m.ContextLength,
-			MaxCompletionTokens: m.MaxCompletionTokens,
-		}
-
-		// Copy thinking support if present
-		if m.Thinking != nil {
-			agentic.Thinking = &registry.ThinkingSupport{
-				Min:            m.Thinking.Min,
-				Max:            m.Thinking.Max,
-				ZeroAllowed:    m.Thinking.ZeroAllowed,
-				DynamicAllowed: m.Thinking.DynamicAllowed,
-			}
-		}
-
-		result = append(result, agentic)
-	}
-
-	return result
 }

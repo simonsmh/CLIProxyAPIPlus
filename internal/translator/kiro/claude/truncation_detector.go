@@ -7,19 +7,14 @@ import (
 	"encoding/json"
 	"strings"
 
+	kirocommon "github.com/router-for-me/CLIProxyAPI/v7/internal/translator/kiro/common"
 	log "github.com/sirupsen/logrus"
 )
 
-// TruncationInfo contains details about detected truncation in a tool use event.
-type TruncationInfo struct {
-	IsTruncated    bool              // Whether truncation was detected
-	TruncationType string            // Type of truncation detected
-	ToolName       string            // Name of the truncated tool
-	ToolUseID      string            // ID of the truncated tool use
-	RawInput       string            // The raw (possibly truncated) input string
-	ParsedFields   map[string]string // Fields that were successfully parsed before truncation
-	ErrorMessage   string            // Human-readable error message
-}
+// TruncationInfo is an alias for the shared definition in
+// internal/translator/kiro/common; kept here so this file's existing
+// references stay short.
+type TruncationInfo = kirocommon.TruncationInfo
 
 // TruncationType constants for different truncation scenarios
 const (

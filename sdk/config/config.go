@@ -28,7 +28,6 @@ type VertexCompatModel = internalconfig.VertexCompatModel
 type OpenAICompatibility = internalconfig.OpenAICompatibility
 type OpenAICompatibilityAPIKey = internalconfig.OpenAICompatibilityAPIKey
 type OpenAICompatibilityModel = internalconfig.OpenAICompatibilityModel
-type KiroRateLimitConfig = internalconfig.KiroRateLimitConfig
 
 type TLS = internalconfig.TLSConfig
 

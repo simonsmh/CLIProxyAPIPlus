@@ -192,8 +192,8 @@ func AnalyzeBufferedStream(chunks [][]byte) BufferedStreamResult {
 							if idx, ok := event["index"].(float64); ok {
 								currentToolIndex = int(idx)
 							}
-							// Capture tool use ID only for web_search toolResults handshake
-							if id, ok := cb["id"].(string); ok && (currentToolName == "web_search" || currentToolName == "remote_web_search") {
+							// Capture tool use ID only for web_search/web_fetch toolResults handshake
+							if id, ok := cb["id"].(string); ok && (strings.HasPrefix(currentToolName, "web_search") || strings.HasPrefix(currentToolName, "web_fetch") || currentToolName == "remote_web_search") {
 								result.WebSearchToolUseId = id
 							}
 							toolInputBuilder.Reset()
@@ -215,7 +215,7 @@ func AnalyzeBufferedStream(chunks [][]byte) BufferedStreamResult {
 
 			case "content_block_stop":
 				// Finalize tool use detection
-				if currentToolName == "web_search" || currentToolName == "websearch" || currentToolName == "remote_web_search" {
+				if strings.HasPrefix(currentToolName, "web_search") || strings.HasPrefix(currentToolName, "web_fetch") || currentToolName == "websearch" || currentToolName == "remote_web_search" {
 					result.HasWebSearchToolUse = true
 					result.WebSearchToolUseIndex = currentToolIndex
 					// Extract query from accumulated input JSON

@@ -527,6 +527,13 @@ func GenerateTokenFileName(tokenData *KiroTokenData) string {
 // DefaultKiroRegion is the fallback region when none is specified.
 const DefaultKiroRegion = "us-east-1"
 
+// DefaultBuilderIDProfileArn is the shared profile ARN that kiro-cli hardcodes
+// for AWS Builder ID (free-tier) tokens. Builder ID tokens cannot call
+// profile-management APIs (ListAvailableProfiles/GetProfile all reject them),
+// so kiro-cli sends this constant ARN verbatim in ListAvailableModels and
+// GenerateAssistantResponse requests. Captured from kiro-cli 2.7.0 traffic.
+const DefaultBuilderIDProfileArn = "arn:aws:codewhisperer:us-east-1:638616132270:profile/AAAACCCCXXXX"
+
 // GetCodeWhispererLegacyEndpoint returns the legacy CodeWhisperer JSON-RPC endpoint.
 // This endpoint supports JSON-RPC style requests with x-amz-target headers.
 // The Q endpoint (q.{region}.amazonaws.com) does NOT support JSON-RPC style.

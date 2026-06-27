@@ -744,57 +744,27 @@ func main() {
 		// Note: This config mutation is safe - auth commands exit after completion
 		// and don't share config with StartService (which is in the else branch)
 		setKiroIncognitoMode(cfg, useIncognito, noIncognito)
-		kiro.InitFingerprintConfig(cfg)
-		kiro.InitRateLimiterConfig(cfg)
-		kiro.InitSystemPromptInjectConfig(cfg)
-		kiro.InitTruncationDetectorConfig(cfg)
-		kiro.InitExtractThinkingTagConfig(cfg)
 		cmd.DoKiroLogin(cfg, options)
 	} else if kiroGoogleLogin {
 		// For Kiro auth, default to incognito mode for multi-account support
 		// Users can explicitly override with --no-incognito
 		// Note: This config mutation is safe - auth commands exit after completion
 		setKiroIncognitoMode(cfg, useIncognito, noIncognito)
-		kiro.InitFingerprintConfig(cfg)
-		kiro.InitRateLimiterConfig(cfg)
-		kiro.InitSystemPromptInjectConfig(cfg)
-		kiro.InitTruncationDetectorConfig(cfg)
-		kiro.InitExtractThinkingTagConfig(cfg)
 		cmd.DoKiroGoogleLogin(cfg, options)
 	} else if kiroAWSLogin {
 		// For Kiro auth, default to incognito mode for multi-account support
 		// Users can explicitly override with --no-incognito
 		setKiroIncognitoMode(cfg, useIncognito, noIncognito)
-		kiro.InitFingerprintConfig(cfg)
-		kiro.InitRateLimiterConfig(cfg)
-		kiro.InitSystemPromptInjectConfig(cfg)
-		kiro.InitTruncationDetectorConfig(cfg)
-		kiro.InitExtractThinkingTagConfig(cfg)
 		cmd.DoKiroAWSLogin(cfg, options)
 	} else if kiroAWSAuthCode {
 		// For Kiro auth with authorization code flow (better UX)
 		setKiroIncognitoMode(cfg, useIncognito, noIncognito)
-		kiro.InitFingerprintConfig(cfg)
-		kiro.InitRateLimiterConfig(cfg)
-		kiro.InitSystemPromptInjectConfig(cfg)
-		kiro.InitTruncationDetectorConfig(cfg)
-		kiro.InitExtractThinkingTagConfig(cfg)
 		cmd.DoKiroAWSAuthCodeLogin(cfg, options)
 	} else if kiroImport {
-		kiro.InitFingerprintConfig(cfg)
-		kiro.InitRateLimiterConfig(cfg)
-		kiro.InitSystemPromptInjectConfig(cfg)
-		kiro.InitTruncationDetectorConfig(cfg)
-		kiro.InitExtractThinkingTagConfig(cfg)
 		cmd.DoKiroImport(cfg, options)
 	} else if kiroIDCLogin {
 		// For Kiro IDC auth, default to incognito mode for multi-account support
 		setKiroIncognitoMode(cfg, useIncognito, noIncognito)
-		kiro.InitFingerprintConfig(cfg)
-		kiro.InitRateLimiterConfig(cfg)
-		kiro.InitSystemPromptInjectConfig(cfg)
-		kiro.InitTruncationDetectorConfig(cfg)
-		kiro.InitExtractThinkingTagConfig(cfg)
 		cmd.DoKiroIDCLogin(cfg, options, kiroIDCStartURL, kiroIDCRegion, kiroIDCFlow)
 	} else if xaiLogin {
 		cmd.DoXAILogin(cfg, options)
@@ -900,10 +870,6 @@ func main() {
 			}
 
 			if cfg.AuthDir != "" {
-				kiro.InitRateLimiterConfig(cfg)
-				kiro.InitSystemPromptInjectConfig(cfg)
-				kiro.InitTruncationDetectorConfig(cfg)
-				kiro.InitExtractThinkingTagConfig(cfg)
 				kiro.InitializeAndStart(cfg.AuthDir, cfg)
 				defer kiro.StopGlobalRefreshManager()
 			}

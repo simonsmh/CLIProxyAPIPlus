@@ -6,8 +6,6 @@ package registry
 import (
 	"strings"
 	"time"
-
-	kirocommon "github.com/router-for-me/CLIProxyAPI/v7/internal/translator/kiro/common"
 )
 
 // KiroAPIModel represents a model from Kiro API response.
@@ -114,21 +112,6 @@ func ConvertKiroAPIModels(kiroModels []*KiroAPIModel) []*ModelInfo {
 func GenerateAgenticVariants(models []*ModelInfo) []*ModelInfo {
 	if len(models) == 0 {
 		return nil
-	}
-
-	// Agentic variants are a no-op unless system-prompt injection is on.
-	// Without it, the "-agentic" suffix doesn't change backend behavior, so
-	// exposing both the base and the variant is just noise.
-	if !kirocommon.IsSystemPromptInjectEnabled() {
-		// Return a copy so callers don't mutate our input slice.
-		result := make([]*ModelInfo, 0, len(models))
-		for _, model := range models {
-			if model == nil {
-				continue
-			}
-			result = append(result, model)
-		}
-		return result
 	}
 
 	// Pre-allocate result with capacity for both base models and variants
