@@ -12,15 +12,6 @@ const (
 	// ThinkingEndTag is the end tag for thinking blocks in responses.
 	ThinkingEndTag = "</thinking>"
 
-	// CodeFenceMarker is the markdown code fence marker.
-	CodeFenceMarker = "```"
-
-	// AltCodeFenceMarker is the alternative markdown code fence marker.
-	AltCodeFenceMarker = "~~~"
-
-	// InlineCodeMarker is the markdown inline code marker (backtick).
-	InlineCodeMarker = "`"
-
 	// DefaultAssistantContentWithTools is the fallback content for assistant messages
 	// that have tool_use but no text content. Kiro API requires non-empty content.
 	// IMPORTANT: Use a bracketed marker so the model recognizes it as a structural
