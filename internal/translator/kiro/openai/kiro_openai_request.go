@@ -687,17 +687,7 @@ func buildAssistantMessageFromOpenAI(msg gjson.Result) KiroAssistantResponseMess
 		}
 	}
 
-	// CRITICAL FIX: Kiro API requires non-empty content for assistant messages
-	// This can happen with compaction requests or error recovery scenarios
 	finalContent := contentBuilder.String()
-	if strings.TrimSpace(finalContent) == "" {
-		if len(toolUses) > 0 {
-			finalContent = kirocommon.DefaultAssistantContentWithTools
-		} else {
-			finalContent = kirocommon.DefaultAssistantContent
-		}
-		log.Debugf("kiro-openai: assistant content was empty, using default: %s", finalContent)
-	}
 
 	return KiroAssistantResponseMessage{
 		Content:  finalContent,

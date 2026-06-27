@@ -2932,7 +2932,7 @@ func (e *KiroExecutor) streamToChannel(ctx context.Context, body io.Reader, out 
 
 					for len(processContent) > 0 {
 						if inThinkBlock {
-							endIdx := strings.Index(processContent, kirocommon.ThinkingEndTag)
+							endIdx := strings.Index(processContent, "</thinking>")
 							if endIdx >= 0 {
 								thinkingText := processContent[:endIdx]
 								if thinkingText != "" {
@@ -2962,11 +2962,11 @@ func (e *KiroExecutor) streamToChannel(ctx context.Context, body io.Reader, out 
 									isThinkingBlockOpen = false
 								}
 								inThinkBlock = false
-								processContent = processContent[endIdx+len(kirocommon.ThinkingEndTag):]
+								processContent = processContent[endIdx+len("</thinking>"):]
 							} else {
 								partialMatch := false
-								for i := 1; i < len(kirocommon.ThinkingEndTag) && i <= len(processContent); i++ {
-									if strings.HasSuffix(processContent, kirocommon.ThinkingEndTag[:i]) {
+								for i := 1; i < len("</thinking>") && i <= len(processContent); i++ {
+									if strings.HasSuffix(processContent, "</thinking>"[:i]) {
 										pendingContent.WriteString(processContent[len(processContent)-i:])
 										processContent = processContent[:len(processContent)-i]
 										partialMatch = true
@@ -2996,7 +2996,7 @@ func (e *KiroExecutor) streamToChannel(ctx context.Context, body io.Reader, out 
 								processContent = ""
 							}
 						} else {
-							startIdx := strings.Index(processContent, kirocommon.ThinkingStartTag)
+							startIdx := strings.Index(processContent, "<thinking>")
 							if startIdx >= 0 {
 								textBefore := processContent[:startIdx]
 								if textBefore != "" {
@@ -3032,11 +3032,11 @@ func (e *KiroExecutor) streamToChannel(ctx context.Context, body io.Reader, out 
 									isTextBlockOpen = false
 								}
 								inThinkBlock = true
-								processContent = processContent[startIdx+len(kirocommon.ThinkingStartTag):]
+								processContent = processContent[startIdx+len("<thinking>"):]
 							} else {
 								partialMatch := false
-								for i := 1; i < len(kirocommon.ThinkingStartTag) && i <= len(processContent); i++ {
-									if strings.HasSuffix(processContent, kirocommon.ThinkingStartTag[:i]) {
+								for i := 1; i < len("<thinking>") && i <= len(processContent); i++ {
+									if strings.HasSuffix(processContent, "<thinking>"[:i]) {
 										pendingContent.WriteString(processContent[len(processContent)-i:])
 										processContent = processContent[:len(processContent)-i]
 										partialMatch = true
@@ -3083,8 +3083,8 @@ func (e *KiroExecutor) streamToChannel(ctx context.Context, body io.Reader, out 
 					// stray thinking tag strings so they don't leak into output.
 					emitText := contentDelta
 					if hasOfficialReasoningEvent {
-						emitText = strings.ReplaceAll(emitText, kirocommon.ThinkingStartTag, "")
-						emitText = strings.ReplaceAll(emitText, kirocommon.ThinkingEndTag, "")
+						emitText = strings.ReplaceAll(emitText, "<thinking>", "")
+						emitText = strings.ReplaceAll(emitText, "</thinking>", "")
 					}
 					if emitText == "" {
 						continue
