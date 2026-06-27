@@ -50,8 +50,8 @@ func ConvertClaudeRequestToKiro(modelName string, inputRawJSON []byte, stream bo
 // Supports tool calling - tools are passed via userInputMessageContext.
 // origin parameter determines which quota to use: "CLI" for Amazon Q, "AI_EDITOR" for Kiro IDE.
 // Returns the serialized Kiro API request payload.
-func BuildKiroPayload(claudeBody []byte, modelID, profileArn, origin string, requestedModel string) []byte {
-	log.Debugf("kiro: BuildKiroPayload called, modelID=%s, origin=%s, requestedModel=%s", modelID, origin, requestedModel)
+func BuildKiroPayload(claudeBody []byte, modelID, profileArn, origin string) []byte {
+	log.Debugf("kiro: BuildKiroPayload called, modelID=%s, origin=%s", modelID, origin)
 
 	// Normalize origin value for Kiro API compatibility
 	origin = kirocommon.NormalizeOrigin(origin)
@@ -74,38 +74,34 @@ func BuildKiroPayload(claudeBody []byte, modelID, profileArn, origin string, req
 	// Process messages and build history
 	history, currentUserMsg, currentToolResults := processMessages(messages, modelID, origin)
 
+	// ALWAYS flatten tool_use/tool_result in history to plain text.
+	// Bedrock requires toolConfig for structured tool content, but the Kiro
+	// API forwarding layer doesn't support passing it through. Flattening
+	// avoids the 400 while preserving tool call/result content as readable text.
+	history = kirocommon.FlattenToolHistory(history)
+	if currentUserMsg != nil && len(currentToolResults) > 0 {
+		for _, tr := range currentToolResults {
+			text := toolResultToText(tr.Content)
+			if text != "" {
+				if currentUserMsg.Content != "" {
+					currentUserMsg.Content += "\n\n" + text
+				} else {
+					currentUserMsg.Content = text
+				}
+			}
+		}
+		currentToolResults = nil
+	}
+
 	// Build content with system prompt.
-	// Keep thinking tags on subsequent turns so multi-turn Claude sessions
-	// continue to emit reasoning events.
 	if currentUserMsg != nil {
 		currentUserMsg.Content = buildFinalContent(currentUserMsg.Content, systemPrompt, currentToolResults)
 
-		// Deduplicate currentToolResults
-		currentToolResults = kirocommon.DeduplicateToolResults(currentToolResults)
-
-		// Build userInputMessageContext with tools and tool results.
-		//
-		// CRITICAL: when history contains any toolUses or toolResults, Kiro's
-		// schema validator requires currentMessage.userInputMessageContext.tools
-		// to be a non-empty array of tool specifications. Without it the API
-		// returns "Improperly formed request" (HTTP 400) — even if the current
-		// turn itself doesn't carry any tool use. This commonly happens during
-		// client-side compaction or when a client (e.g. OpenCode) sends a
-		// follow-up request without re-attaching the original `tools` array.
-		//
-		// To stay robust to those clients, synthesize minimal stub tool specs
-		// from the names referenced in history whenever the client didn't
-		// provide tools but history references them.
-		if len(kiroTools) == 0 {
-			kiroTools = kirocommon.SynthesizeToolSpecsFromHistory(history)
-			if len(kiroTools) > 0 {
-				log.Infof("kiro: synthesized %d stub tool spec(s) from history (client did not send tools)", len(kiroTools))
-			}
-		}
-		if len(kiroTools) > 0 || len(currentToolResults) > 0 {
+		// Keep tools in userInputMessageContext so Kiro knows what's available,
+		// but no structured tool_use/tool_result remains in history.
+		if len(kiroTools) > 0 {
 			currentUserMsg.UserInputMessageContext = &KiroUserInputMessageContext{
-				Tools:       kiroTools,
-				ToolResults: currentToolResults,
+				Tools: kiroTools,
 			}
 		}
 	}
@@ -506,4 +502,22 @@ func BuildAssistantMessageStruct(msg gjson.Result) KiroAssistantResponseMessage 
 		Content:  finalContent,
 		ToolUses: toolUses,
 	}
+}
+
+// toolResultToText converts KiroTextContent array to a readable text line.
+func toolResultToText(content []KiroTextContent) string {
+	if len(content) == 0 {
+		return ""
+	}
+	parts := make([]string, 0, len(content))
+	for _, c := range content {
+		if c.Text != "" {
+			parts = append(parts, c.Text)
+		}
+	}
+	text := strings.Join(parts, "\n")
+	if text == "" {
+		return ""
+	}
+	return "[Tool result: " + text + "]"
 }

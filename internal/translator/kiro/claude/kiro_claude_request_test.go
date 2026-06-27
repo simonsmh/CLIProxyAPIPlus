@@ -8,15 +8,10 @@ import (
 	"github.com/tidwall/gjson"
 )
 
-// TestBuildKiroPayload_HistoryWithToolUseButNoTools reproduces the 400 case
-// observed in production: a follow-up Claude request whose history contains
-// a previous assistant tool_use turn, but whose top-level `tools` array was
-// not re-attached by the client (e.g. OpenCode after compaction).
-//
-// Expected behavior: the resulting Kiro payload's
-// currentMessage.userInputMessageContext.tools must be a non-empty array,
-// because Kiro rejects requests with history tool turns and empty tools as
-// "Improperly formed request".
+// TestBuildKiroPayload_HistoryWithToolUseButNoTools verifies that when the
+// client sends no tools but history contains tool_use/tool_result, the tool
+// content is flattened to plain text. This avoids Bedrock's "toolConfig
+// required" 400.
 func TestBuildKiroPayload_HistoryWithToolUseButNoTools(t *testing.T) {
 	claudeReq := `{
 		"model": "claude-sonnet-4-5",
@@ -33,28 +28,24 @@ func TestBuildKiroPayload_HistoryWithToolUseButNoTools(t *testing.T) {
 		]
 	}`
 
-	out := BuildKiroPayload([]byte(claudeReq), "claude-sonnet-4-5", "arn:test", "test", "claude-sonnet-4-5")
+	out := BuildKiroPayload([]byte(claudeReq), "claude-sonnet-4-5", "arn:test", "test")
 	if len(out) == 0 {
 		t.Fatal("expected non-empty payload")
 	}
 
+	// No tools → flattened to text. No structured tools array.
 	tools := gjson.GetBytes(out, "conversationState.currentMessage.userInputMessage.userInputMessageContext.tools")
-	if !tools.IsArray() {
-		t.Fatalf("currentMessage.userInputMessageContext.tools is not an array: %s", tools.Raw)
+	if tools.Exists() && tools.IsArray() && len(tools.Array()) > 0 {
+		t.Fatalf("expected no synthesized tools after flatten, got: %s", tools.Raw)
 	}
-	if len(tools.Array()) == 0 {
-		t.Fatalf("expected synthesized tools, got empty array. payload: %s", string(out))
+
+	// Verify no structured toolUses/toolResults remain
+	payloadStr := string(out)
+	if strings.Contains(payloadStr, `"toolUses"`) {
+		t.Error("expected no structured toolUses after flatten")
 	}
-	// Confirm the synthesized stub references the historical tool name.
-	found := false
-	for _, t0 := range tools.Array() {
-		if t0.Get("toolSpecification.name").String() == "Bash" {
-			found = true
-			break
-		}
-	}
-	if !found {
-		t.Fatalf("expected stub tool spec named 'Bash', got: %s", tools.Raw)
+	if strings.Contains(payloadStr, `"toolResults"`) {
+		t.Error("expected no structured toolResults after flatten")
 	}
 }
 
@@ -79,7 +70,7 @@ func TestBuildKiroPayload_HistoryWithToolUseAndExplicitTools(t *testing.T) {
 		]
 	}`
 
-	out := BuildKiroPayload([]byte(claudeReq), "claude-sonnet-4-5", "arn:test", "test", "claude-sonnet-4-5")
+	out := BuildKiroPayload([]byte(claudeReq), "claude-sonnet-4-5", "arn:test", "test")
 	tools := gjson.GetBytes(out, "conversationState.currentMessage.userInputMessage.userInputMessageContext.tools")
 	if !tools.IsArray() || len(tools.Array()) != 1 {
 		t.Fatalf("expected exactly 1 tool, got: %s", tools.Raw)
@@ -99,36 +90,49 @@ func TestBuildKiroPayload_NoToolsNoHistoryToolUse(t *testing.T) {
 			{"role": "user", "content": "hello"}
 		]
 	}`
-	out := BuildKiroPayload([]byte(claudeReq), "claude-sonnet-4-5", "arn:test", "test", "claude-sonnet-4-5")
+	out := BuildKiroPayload([]byte(claudeReq), "claude-sonnet-4-5", "arn:test", "test")
 	tools := gjson.GetBytes(out, "conversationState.currentMessage.userInputMessage.userInputMessageContext.tools")
 	if tools.Exists() && tools.IsArray() && len(tools.Array()) > 0 {
 		t.Fatalf("did not expect tools to be synthesized for plain chat turn: %s", tools.Raw)
 	}
 }
 
-// TestSynthesizeToolSpecsFromHistory_Dedup ensures repeated tool names yield a
-// single stub.
-func TestSynthesizeToolSpecsFromHistory_Dedup(t *testing.T) {
+// TestFlattenToolHistory ensures tool_use and tool_result in history are
+// converted to plain text when the client sends no tools.
+func TestFlattenToolHistory(t *testing.T) {
 	hist := []KiroHistoryMessage{
+		{UserInputMessage: &KiroUserInputMessage{Content: "Read the file"}},
 		{AssistantResponseMessage: &KiroAssistantResponseMessage{
-			ToolUses: []KiroToolUse{{Name: "Bash"}, {Name: "Bash"}, {Name: "Read"}},
+			Content:  "I'll read it",
+			ToolUses: []KiroToolUse{{Name: "Read", Input: map[string]interface{}{"path": "a.txt"}}},
 		}},
-		{AssistantResponseMessage: &KiroAssistantResponseMessage{
-			ToolUses: []KiroToolUse{{Name: "Read"}, {Name: "Edit"}},
+		{UserInputMessage: &KiroUserInputMessage{
+			Content: "Here's the result",
+			UserInputMessageContext: &KiroUserInputMessageContext{
+				ToolResults: []KiroToolResult{{
+					ToolUseID: "tu_1",
+					Content:   []KiroTextContent{{Text: "file contents"}},
+				}},
+			},
 		}},
 	}
-	got := kirocommon.SynthesizeToolSpecsFromHistory(hist)
-	if len(got) != 3 {
-		t.Fatalf("expected 3 unique stubs, got %d: %+v", len(got), got)
+	flattened := kirocommon.FlattenToolHistory(hist)
+
+	// Assistant message: toolUse should be converted to text
+	arm := flattened[1].AssistantResponseMessage
+	if len(arm.ToolUses) != 0 {
+		t.Fatalf("expected 0 toolUses after flatten, got %d", len(arm.ToolUses))
 	}
-	names := []string{}
-	for _, g := range got {
-		names = append(names, g.ToolSpecification.Name)
+	if !strings.Contains(arm.Content, "[Tool call: Read(") {
+		t.Fatalf("expected tool call text in assistant content, got: %s", arm.Content)
 	}
-	joined := strings.Join(names, ",")
-	for _, want := range []string{"Bash", "Read", "Edit"} {
-		if !strings.Contains(joined, want) {
-			t.Fatalf("expected %q in synthesized names %q", want, joined)
-		}
+
+	// User message: toolResult should be converted to text
+	uim := flattened[2].UserInputMessage
+	if uim.UserInputMessageContext != nil {
+		t.Fatalf("expected nil UserInputMessageContext after flatten")
+	}
+	if !strings.Contains(uim.Content, "[Tool result: file contents]") {
+		t.Fatalf("expected tool result text in user content, got: %s", uim.Content)
 	}
 }

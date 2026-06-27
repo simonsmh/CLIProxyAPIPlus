@@ -526,8 +526,8 @@ func TestApplyKiroTokenUsagePreservesCacheTokenBreakdown(t *testing.T) {
 	if !ok {
 		t.Fatal("helps.ApplyKiroTokenUsage() = false, want true")
 	}
-	if detail.InputTokens != 290 {
-		t.Fatalf("InputTokens = %d, want 290", detail.InputTokens)
+	if detail.InputTokens != 4129 {
+		t.Fatalf("InputTokens = %d, want 4129 (uncached 290 + cacheRead 3822 + cacheWrite 17)", detail.InputTokens)
 	}
 	if detail.OutputTokens != 1 {
 		t.Fatalf("OutputTokens = %d, want 1", detail.OutputTokens)
@@ -575,8 +575,8 @@ func TestKiroContextUsageFallbackDoesNotOverwritePreciseTokenUsage(t *testing.T)
 	if _, applied := helps.ApplyKiroContextUsageFallback(&detail, 50, hasPreciseTokenUsage); applied {
 		t.Fatal("helps.ApplyKiroContextUsageFallback() applied despite precise token usage")
 	}
-	if detail.InputTokens != 290 {
-		t.Fatalf("InputTokens = %d, want precise uncached value 290", detail.InputTokens)
+	if detail.InputTokens != 4129 {
+		t.Fatalf("InputTokens = %d, want 4129 (uncached 290 + cacheRead 3822 + cacheWrite 17)", detail.InputTokens)
 	}
 	if detail.TotalTokens != 4130 {
 		t.Fatalf("TotalTokens = %d, want upstream total 4130", detail.TotalTokens)

@@ -2571,8 +2571,8 @@ func (s *Service) fetchKiroModels(a *coreauth.Auth) []*ModelInfo {
 
 	// Extract token data from auth attributes
 	tokenData := s.extractKiroTokenData(a)
-	if tokenData == nil || tokenData.AccessToken == "" || tokenData.ProfileArn == "" {
-		log.Debug("kiro: no valid token or profile ARN in auth, using static models")
+	if tokenData == nil || tokenData.AccessToken == "" {
+		log.Debug("kiro: no valid token data in auth, using static models")
 		return registry.GetKiroModels()
 	}
 
@@ -2646,12 +2646,6 @@ func (s *Service) extractKiroTokenData(a *coreauth.Auth) *kiroauth.KiroTokenData
 	// access_token is required
 	if accessToken == "" {
 		return nil
-	}
-
-	// Fallback to AWS Builder ID shared profile ARN if empty
-	if profileArn == "" {
-		profileArn = kiroauth.DefaultBuilderIDProfileArn
-		log.Debug("kiro: empty profileArn, defaulting to AWS Builder ID shared profile ARN")
 	}
 
 	return &kiroauth.KiroTokenData{

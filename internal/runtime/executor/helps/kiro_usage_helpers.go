@@ -63,12 +63,24 @@ func ApplyKiroTokenUsage(detail *usage.Detail, tokenUsage map[string]interface{}
 	if cacheReadTokens, ok := KiroTokenUsageInt64(tokenUsage, "cacheReadInputTokens"); ok {
 		detail.CacheReadTokens = cacheReadTokens
 		detail.CachedTokens = cacheReadTokens
+		// Preserve original semantics: cacheRead tokens count toward InputTokens
+		if detail.InputTokens > 0 {
+			detail.InputTokens += cacheReadTokens
+		} else {
+			detail.InputTokens = cacheReadTokens
+		}
 		updated = true
 	}
 	if cacheCreationTokens, ok := KiroTokenUsageInt64(tokenUsage, "cacheWriteInputTokens"); ok {
 		detail.CacheCreationTokens = cacheCreationTokens
 		if detail.CachedTokens == 0 {
 			detail.CachedTokens = cacheCreationTokens
+		}
+		// Preserve original semantics: cacheWrite tokens count toward InputTokens
+		if detail.InputTokens > 0 {
+			detail.InputTokens += cacheCreationTokens
+		} else {
+			detail.InputTokens = cacheCreationTokens
 		}
 		updated = true
 	}

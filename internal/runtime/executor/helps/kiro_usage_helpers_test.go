@@ -118,8 +118,8 @@ func TestApplyKiroTokenUsage(t *testing.T) {
 		if detail.TotalTokens != 500 {
 			t.Errorf("TotalTokens = %d, want 500", detail.TotalTokens)
 		}
-		if detail.InputTokens != 200 {
-			t.Errorf("InputTokens = %d, want 200", detail.InputTokens)
+		if detail.InputTokens != 400 {
+			t.Errorf("InputTokens = %d, want 400 (uncached 200 + cacheRead 150 + cacheWrite 50)", detail.InputTokens)
 		}
 		if detail.CacheReadTokens != 150 {
 			t.Errorf("CacheReadTokens = %d, want 150", detail.CacheReadTokens)

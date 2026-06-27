@@ -13,7 +13,16 @@ type KiroPayload struct {
 	AdditionalModelRequestFields *KiroAdditionalModelRequestFields `json:"additionalModelRequestFields,omitempty"`
 }
 
-// KiroAdditionalModelRequestFields holds the thinking and output configuration.
+// KiroConversationState holds the conversation context.
+type KiroConversationState struct {
+	AgentContinuationID string               `json:"agentContinuationId,omitempty"`
+	AgentTaskType       string               `json:"agentTaskType,omitempty"`
+	ChatTriggerType     string               `json:"chatTriggerType"` // Required: "MANUAL"
+	ConversationID      string               `json:"conversationId"`
+	CurrentMessage      KiroCurrentMessage   `json:"currentMessage"`
+	History             []KiroHistoryMessage `json:"history,omitempty"`
+}
+
 type KiroAdditionalModelRequestFields struct {
 	Thinking     *KiroThinkingConfig `json:"thinking,omitempty"`
 	OutputConfig *KiroOutputConfig   `json:"output_config,omitempty"`
@@ -27,16 +36,6 @@ type KiroThinkingConfig struct {
 // KiroOutputConfig holds target effort.
 type KiroOutputConfig struct {
 	Effort string `json:"effort,omitempty"` // "low", "medium", "high", "xhigh", "max"
-}
-
-// KiroConversationState holds the conversation context.
-type KiroConversationState struct {
-	AgentContinuationID string               `json:"agentContinuationId,omitempty"`
-	AgentTaskType       string               `json:"agentTaskType,omitempty"`
-	ChatTriggerType     string               `json:"chatTriggerType"` // Required: "MANUAL"
-	ConversationID      string               `json:"conversationId"`
-	CurrentMessage      KiroCurrentMessage   `json:"currentMessage"`
-	History             []KiroHistoryMessage `json:"history,omitempty"`
 }
 
 // KiroCurrentMessage wraps the current user message.

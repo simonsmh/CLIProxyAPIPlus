@@ -652,8 +652,3 @@ func extractCodexConfig(body []byte) ThinkingConfig {
 func ExtractThinkingConfigPublic(body []byte, provider string) ThinkingConfig {
 	return extractThinkingConfig(body, provider)
 }
-
-// ParseSuffixToConfigPublic is a public wrapper around parseSuffixToConfig
-func ParseSuffixToConfigPublic(rawSuffix, provider, model string) ThinkingConfig {
-	return parseSuffixToConfig(rawSuffix, provider, model)
-}

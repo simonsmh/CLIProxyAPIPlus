@@ -1,6 +1,7 @@
 package common
 
 import (
+	"encoding/json"
 	"fmt"
 	"strings"
 
@@ -16,14 +17,6 @@ var (
 	emptySchema = map[string]interface{}{
 		"type":       "object",
 		"properties": map[string]interface{}{},
-	}
-
-	// stubInputSchema is the permissive schema used by
-	// SynthesizeToolSpecsFromHistory for fallback tool stubs.
-	stubInputSchema = map[string]interface{}{
-		"type":                 "object",
-		"properties":           map[string]interface{}{},
-		"additionalProperties": true,
 	}
 )
 
@@ -104,40 +97,116 @@ func DeduplicateToolResults(toolResults []KiroToolResult) []KiroToolResult {
 	return unique
 }
 
-// SynthesizeToolSpecsFromHistory walks history and builds stub
-// KiroToolWrapper entries for every tool name the assistant has used,
-// so a request that replays history but no longer carries explicit
-// tool specs still passes Q's "history references unknown tool"
-// validator.
-func SynthesizeToolSpecsFromHistory(history []KiroHistoryMessage) []KiroToolWrapper {
+// FlattenToolHistory walks history and converts all structured tool_use /
+// tool_result content into plain text lines so that Bedrock's "toolConfig
+// required" validator never fires. Only call this when the client did NOT
+// send tools — when tools are present the structured form is preserved.
+//
+// Returns a new history slice with all tool references flattened to text.
+func FlattenToolHistory(history []KiroHistoryMessage) []KiroHistoryMessage {
 	if len(history) == 0 {
-		return nil
+		return history
 	}
-	seen := make(map[string]struct{})
-	var stubs []KiroToolWrapper
+	out := make([]KiroHistoryMessage, 0, len(history))
 	for _, h := range history {
-		if h.AssistantResponseMessage == nil {
-			continue
+		h = flattenOneHistoryMessage(h)
+		out = append(out, h)
+	}
+	return out
+}
+
+// FlattenCurrentMessage strips structured tool content from the current
+// user message (toolResults → text, removes tools array).
+func FlattenCurrentMessage(msg *KiroUserInputMessage) *KiroUserInputMessage {
+	if msg == nil || msg.UserInputMessageContext == nil {
+		return msg
+	}
+	ctx := msg.UserInputMessageContext
+	if len(ctx.ToolResults) > 0 {
+		for _, tr := range ctx.ToolResults {
+			text := toolResultContentToText(tr.Content)
+			if text != "" {
+				if msg.Content != "" {
+					msg.Content += "\n\n" + text
+				} else {
+					msg.Content = text
+				}
+			}
 		}
-		for _, tu := range h.AssistantResponseMessage.ToolUses {
-			name := strings.TrimSpace(tu.Name)
-			if name == "" {
-				continue
+		ctx.ToolResults = nil
+	}
+	// Remove tools — client didn't ask for tool calling
+	ctx.Tools = nil
+	if len(ctx.ToolResults) == 0 && len(ctx.Tools) == 0 {
+		msg.UserInputMessageContext = nil
+	}
+	return msg
+}
+
+// flattenOneHistoryMessage converts tool_use / tool_result in a single
+// history message to plain text.
+func flattenOneHistoryMessage(h KiroHistoryMessage) KiroHistoryMessage {
+	// Flatten assistant message: convert toolUses to text lines
+	if h.AssistantResponseMessage != nil && len(h.AssistantResponseMessage.ToolUses) > 0 {
+		arm := h.AssistantResponseMessage
+		for _, tu := range arm.ToolUses {
+			argStr := "{}"
+			if len(tu.Input) > 0 {
+				if b, err := json.Marshal(tu.Input); err == nil {
+					argStr = string(b)
+				}
 			}
-			if _, ok := seen[name]; ok {
-				continue
+			line := fmt.Sprintf("[Tool call: %s(%s)]", tu.Name, argStr)
+			if arm.Content != "" {
+				arm.Content += "\n" + line
+			} else {
+				arm.Content = line
 			}
-			seen[name] = struct{}{}
-			stubs = append(stubs, KiroToolWrapper{
-				ToolSpecification: KiroToolSpecification{
-					Name:        ShortenToolNameIfNeeded(name),
-					Description: fmt.Sprintf("Tool: %s", name),
-					InputSchema: KiroInputSchema{JSON: stubInputSchema},
-				},
-			})
+		}
+		arm.ToolUses = nil
+	}
+
+	// Flatten user message: convert toolResults to text lines
+	if h.UserInputMessage != nil && h.UserInputMessage.UserInputMessageContext != nil {
+		ctx := h.UserInputMessage.UserInputMessageContext
+		if len(ctx.ToolResults) > 0 {
+			for _, tr := range ctx.ToolResults {
+				text := toolResultContentToText(tr.Content)
+				if text != "" {
+					if h.UserInputMessage.Content != "" {
+						h.UserInputMessage.Content += "\n\n" + text
+					} else {
+						h.UserInputMessage.Content = text
+					}
+				}
+			}
+			ctx.ToolResults = nil
+		}
+		ctx.Tools = nil
+		if len(ctx.ToolResults) == 0 && len(ctx.Tools) == 0 {
+			h.UserInputMessage.UserInputMessageContext = nil
 		}
 	}
-	return stubs
+
+	return h
+}
+
+// toolResultContentToText converts KiroTextContent array to a single string.
+func toolResultContentToText(content []KiroTextContent) string {
+	if len(content) == 0 {
+		return ""
+	}
+	parts := make([]string, 0, len(content))
+	for _, c := range content {
+		if c.Text != "" {
+			parts = append(parts, c.Text)
+		}
+	}
+	text := strings.Join(parts, "\n")
+	if text == "" {
+		return ""
+	}
+	return "[Tool result: " + text + "]"
 }
 
 // BuildKiroThinkingConfig converts a canonical thinking.ThinkingConfig into

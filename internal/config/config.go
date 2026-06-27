@@ -114,9 +114,24 @@ type Config struct {
 	// KiroKey defines a list of Kiro (AWS CodeWhisperer) configurations.
 	KiroKey []KiroKey `yaml:"kiro" json:"kiro"`
 
+	// Deprecated: KiroFingerprint is no longer used. Kept for backward compatibility.
+	KiroFingerprint interface{} `yaml:"kiro-fingerprint,omitempty" json:"-"`
+
 	// KiroPreferredEndpoint sets the global default preferred endpoint for all Kiro providers.
 	// Values: "ide" (default, CodeWhisperer) or "cli" (Amazon Q).
 	KiroPreferredEndpoint string `yaml:"kiro-preferred-endpoint" json:"kiro-preferred-endpoint"`
+
+	// Deprecated: KiroRateLimit is no longer used. Kept for backward compatibility.
+	KiroRateLimit interface{} `yaml:"kiro-rate-limit,omitempty" json:"-"`
+
+	// Deprecated: KiroSystemPromptInjectEnable is no longer used. Kept for backward compatibility.
+	KiroSystemPromptInjectEnable interface{} `yaml:"kiro-system-prompt-inject-enable,omitempty" json:"-"`
+
+	// Deprecated: KiroTruncationDetectorEnable is no longer used. Kept for backward compatibility.
+	KiroTruncationDetectorEnable interface{} `yaml:"kiro-truncation-detector-enable,omitempty" json:"-"`
+
+	// Deprecated: KiroExtractThinkingTagEnable is no longer used. Kept for backward compatibility.
+	KiroExtractThinkingTagEnable interface{} `yaml:"kiro-extract-thinking-tag-enable,omitempty" json:"-"`
 
 	// Codex defines a list of Codex API key configurations as specified in the YAML configuration file.
 	CodexKey []CodexKey `yaml:"codex-api-key" json:"codex-api-key"`

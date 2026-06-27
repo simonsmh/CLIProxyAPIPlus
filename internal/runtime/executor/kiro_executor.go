@@ -483,13 +483,13 @@ type KiroExecutor struct {
 // buildKiroPayloadForFormat builds a Kiro-format payload from source-format request bytes.
 // For models known to be non-thinking (e.g. haiku), additionalModelRequestFields is stripped
 // to avoid API 400 errors.
-func buildKiroPayloadForFormat(body []byte, modelID, profileArn, origin string, sourceFormat sdktranslator.Format, requestedModel string) []byte {
-	log.Debugf("kiro: buildKiroPayloadForFormat called, sourceFormat=%s, modelID=%s, origin=%s, requestedModel=%s", sourceFormat.String(), modelID, origin, requestedModel)
+func buildKiroPayloadForFormat(body []byte, modelID, profileArn, origin string, sourceFormat sdktranslator.Format) []byte {
+	log.Debugf("kiro: buildKiroPayloadForFormat called, sourceFormat=%s, modelID=%s, origin=%s", sourceFormat.String(), modelID, origin)
 	var payload []byte
 	switch sourceFormat.String() {
 	case "openai":
 		log.Debugf("kiro: using OpenAI payload builder for source format: %s", sourceFormat.String())
-		payload = kiroopenai.BuildKiroPayloadFromOpenAI(body, modelID, profileArn, origin, requestedModel)
+		payload = kiroopenai.BuildKiroPayloadFromOpenAI(body, modelID, profileArn, origin)
 	case "kiro":
 		// Body is already in Kiro format — pass through directly
 		log.Debugf("kiro: body already in Kiro format, passing through directly")
@@ -497,7 +497,7 @@ func buildKiroPayloadForFormat(body []byte, modelID, profileArn, origin string, 
 	default:
 		// Default to Claude format
 		log.Debugf("kiro: using Claude payload builder for source format: %s", sourceFormat.String())
-		payload = kiroclaude.BuildKiroPayload(body, modelID, profileArn, origin, requestedModel)
+		payload = kiroclaude.BuildKiroPayload(body, modelID, profileArn, origin)
 	}
 
 	// For models that don't support additionalModelRequestFields (e.g. haiku),
@@ -722,7 +722,7 @@ func (e *KiroExecutor) executeWithRetry(ctx context.Context, auth *cliproxyauth.
 
 		// Rebuild payload with the correct origin for this endpoint
 		// Each endpoint requires its matching Origin value in the request body
-		kiroPayload = buildKiroPayloadForFormat(body, kiroModelID, profileArn, currentOrigin, from, req.Model)
+		kiroPayload = buildKiroPayloadForFormat(body, kiroModelID, profileArn, currentOrigin, from)
 
 		log.Debugf("kiro: trying endpoint %d/%d: %s (Name: %s, Origin: %s)",
 			endpointIdx+1, len(endpointConfigs), url, endpointConfig.Name, currentOrigin)
@@ -888,7 +888,7 @@ func (e *KiroExecutor) executeWithRetry(ctx context.Context, auth *cliproxyauth.
 					}
 					accessToken, profileArn = kiroCredentials(auth)
 					// Rebuild payload with new profile ARN if changed
-					kiroPayload = buildKiroPayloadForFormat(body, kiroModelID, profileArn, currentOrigin, from, req.Model)
+					kiroPayload = buildKiroPayloadForFormat(body, kiroModelID, profileArn, currentOrigin, from)
 					if attempt < maxRetries {
 						log.Infof("kiro: token refreshed successfully, retrying request (attempt %d/%d)", attempt+1, maxRetries+1)
 						continue
@@ -955,7 +955,7 @@ func (e *KiroExecutor) executeWithRetry(ctx context.Context, auth *cliproxyauth.
 							// Continue anyway - the token is valid for this request
 						}
 						accessToken, profileArn = kiroCredentials(auth)
-						kiroPayload = buildKiroPayloadForFormat(body, kiroModelID, profileArn, currentOrigin, from, req.Model)
+						kiroPayload = buildKiroPayloadForFormat(body, kiroModelID, profileArn, currentOrigin, from)
 						log.Infof("kiro: token refreshed for 403, retrying request")
 						continue
 					}
@@ -1163,7 +1163,7 @@ func (e *KiroExecutor) executeStreamWithRetry(ctx context.Context, auth *cliprox
 
 		// Rebuild payload with the correct origin for this endpoint
 		// Each endpoint requires its matching Origin value in the request body
-		kiroPayload := buildKiroPayloadForFormat(body, kiroModelID, profileArn, currentOrigin, from, req.Model)
+		kiroPayload := buildKiroPayloadForFormat(body, kiroModelID, profileArn, currentOrigin, from)
 
 		log.Debugf("kiro: stream trying endpoint %d/%d: %s (Name: %s, Origin: %s)",
 			endpointIdx+1, len(endpointConfigs), url, endpointConfig.Name, currentOrigin)
@@ -1329,7 +1329,7 @@ func (e *KiroExecutor) executeStreamWithRetry(ctx context.Context, auth *cliprox
 					}
 					accessToken, profileArn = kiroCredentials(auth)
 					// Rebuild payload with new profile ARN if changed
-					kiroPayload = buildKiroPayloadForFormat(body, kiroModelID, profileArn, currentOrigin, from, req.Model)
+					kiroPayload = buildKiroPayloadForFormat(body, kiroModelID, profileArn, currentOrigin, from)
 					if attempt < maxRetries {
 						log.Infof("kiro: token refreshed successfully, retrying stream request (attempt %d/%d)", attempt+1, maxRetries+1)
 						continue
@@ -1396,7 +1396,7 @@ func (e *KiroExecutor) executeStreamWithRetry(ctx context.Context, auth *cliprox
 							// Continue anyway - the token is valid for this request
 						}
 						accessToken, profileArn = kiroCredentials(auth)
-						kiroPayload = buildKiroPayloadForFormat(body, kiroModelID, profileArn, currentOrigin, from, req.Model)
+						kiroPayload = buildKiroPayloadForFormat(body, kiroModelID, profileArn, currentOrigin, from)
 						log.Infof("kiro: token refreshed for 403, retrying stream request")
 						continue
 					}
@@ -2754,10 +2754,10 @@ func (e *KiroExecutor) streamToChannel(ctx context.Context, body io.Reader, out 
 					lastUsageUpdateTime = time.Now()
 				}
 
-				// Tag-based <thinking> parsing (opt-in). Once the official
-				// reasoningContentEvent channel has been seen, fall through to
+				// Tag-based <thinking> parsing (opt-in via kiro-extract-thinking-tag-enable).
+				// Once the official reasoningContentEvent channel has been seen, fall through to
 				// the plain-text path and strip any stray tag strings.
-				if !hasOfficialReasoningEvent {
+				if kirocommon.IsExtractThinkingTagEnabled() && !hasOfficialReasoningEvent {
 					// Combine buffered partial-tag bytes with the new delta.
 					pendingContent.WriteString(contentDelta)
 					processContent := pendingContent.String()

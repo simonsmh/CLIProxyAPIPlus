@@ -96,65 +96,6 @@ func ConvertKiroAPIModels(kiroModels []*KiroAPIModel) []*ModelInfo {
 	return result
 }
 
-// GenerateAgenticVariants creates -agentic variants for each model.
-// Agentic variants are optimized for coding agents with chunked writes and
-// only make sense when Kiro system-prompt injection is enabled — the agentic
-// behavior is layered on top of the wrapped system prompt. If injection is
-// disabled (the default), variants are not generated and the input list is
-// returned unchanged so clients only see models that will actually behave
-// differently from their base counterparts.
-//
-// Parameters:
-//   - models: Base models to generate variants for
-//
-// Returns:
-//   - []*ModelInfo: Base models, plus agentic variants when injection is enabled.
-func GenerateAgenticVariants(models []*ModelInfo) []*ModelInfo {
-	if len(models) == 0 {
-		return nil
-	}
-
-	// Pre-allocate result with capacity for both base models and variants
-	result := make([]*ModelInfo, 0, len(models)*2)
-
-	for _, model := range models {
-		if model == nil {
-			continue
-		}
-
-		// Add the base model first
-		result = append(result, model)
-
-		// Skip if model already has -agentic suffix
-		if strings.HasSuffix(model.ID, "-agentic") {
-			continue
-		}
-
-		// Skip special models that shouldn't have agentic variants
-		if model.ID == "kiro-auto" {
-			continue
-		}
-
-		// Create agentic variant
-		agenticModel := &ModelInfo{
-			ID:                  model.ID + "-agentic",
-			Object:              model.Object,
-			Created:             model.Created,
-			OwnedBy:             model.OwnedBy,
-			Type:                model.Type,
-			DisplayName:         model.DisplayName + " (Agentic)",
-			Description:         generateAgenticDescription(model.Description),
-			ContextLength:       model.ContextLength,
-			MaxCompletionTokens: model.MaxCompletionTokens,
-			Thinking:            cloneThinkingSupport(model.Thinking),
-		}
-
-		result = append(result, agenticModel)
-	}
-
-	return result
-}
-
 // MergeWithStaticMetadata merges dynamic models with static metadata.
 // Static metadata takes priority for any overlapping fields.
 // This allows manual overrides for specific models while keeping dynamic discovery.
@@ -266,14 +207,6 @@ func generateKiroDisplayName(modelName, normalizedID string) string {
 		}
 	}
 	return "Kiro " + strings.Join(words, " ")
-}
-
-// generateAgenticDescription creates description for agentic variants.
-func generateAgenticDescription(baseDescription string) string {
-	if baseDescription == "" {
-		return "Optimized for coding agents with chunked writes"
-	}
-	return baseDescription + " (Agentic mode: chunked writes)"
 }
 
 // getContextLength returns the context length, using default if not provided.

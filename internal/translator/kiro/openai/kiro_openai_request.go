@@ -50,8 +50,8 @@ func ConvertOpenAIRequestToKiro(modelName string, inputRawJSON []byte, stream bo
 // Supports tool calling - tools are passed via userInputMessageContext.
 // origin parameter determines which quota to use: "CLI" for Amazon Q, "AI_EDITOR" for Kiro IDE.
 // Returns the serialized Kiro API request payload.
-func BuildKiroPayloadFromOpenAI(openaiBody []byte, modelID, profileArn, origin string, requestedModel string) []byte {
-	log.Debugf("kiro-openai: BuildKiroPayloadFromOpenAI called, modelID=%s, origin=%s, requestedModel=%s", modelID, origin, requestedModel)
+func BuildKiroPayloadFromOpenAI(openaiBody []byte, modelID, profileArn, origin string) []byte {
+	log.Debugf("kiro-openai: BuildKiroPayloadFromOpenAI called, modelID=%s, origin=%s", modelID, origin)
 
 	// Normalize origin value for Kiro API compatibility
 	origin = kirocommon.NormalizeOrigin(origin)
@@ -74,27 +74,32 @@ func BuildKiroPayloadFromOpenAI(openaiBody []byte, modelID, profileArn, origin s
 	// Process messages and build history
 	history, currentUserMsg, currentToolResults := processOpenAIMessages(messages, modelID, origin)
 
+	// ALWAYS flatten tool_use/tool_result in history to plain text.
+	// Bedrock requires toolConfig for structured tool content, but the Kiro
+	// API forwarding layer doesn't support passing it through.
+	history = kirocommon.FlattenToolHistory(history)
+	if currentUserMsg != nil && len(currentToolResults) > 0 {
+		for _, tr := range currentToolResults {
+			text := toolResultToTextOpenAI(tr.Content)
+			if text != "" {
+				if currentUserMsg.Content != "" {
+					currentUserMsg.Content += "\n\n" + text
+				} else {
+					currentUserMsg.Content = text
+				}
+			}
+		}
+		currentToolResults = nil
+	}
+
 	// Build content with system prompt
 	if currentUserMsg != nil {
 		currentUserMsg.Content = buildFinalContent(currentUserMsg.Content, systemPrompt, currentToolResults)
 
-		// Deduplicate currentToolResults
-		currentToolResults = kirocommon.DeduplicateToolResults(currentToolResults)
-
-		// Build userInputMessageContext with tools and tool results.
-		// See claude translator for the rationale — Kiro rejects requests when
-		// history contains tool turns but currentMessage.tools is empty. Fall
-		// back to stub specs derived from history if the client omitted tools.
-		if len(kiroTools) == 0 {
-			kiroTools = kirocommon.SynthesizeToolSpecsFromHistory(history)
-			if len(kiroTools) > 0 {
-				log.Infof("kiro-openai: synthesized %d stub tool spec(s) from history (client did not send tools)", len(kiroTools))
-			}
-		}
-		if len(kiroTools) > 0 || len(currentToolResults) > 0 {
+		// Keep tools in userInputMessageContext so Kiro knows what's available
+		if len(kiroTools) > 0 {
 			currentUserMsg.UserInputMessageContext = &KiroUserInputMessageContext{
-				Tools:       kiroTools,
-				ToolResults: currentToolResults,
+				Tools: kiroTools,
 			}
 		}
 	}
@@ -656,4 +661,22 @@ func buildFinalContent(content, systemPrompt string, toolResults []KiroToolResul
 	finalContent := contentBuilder.String()
 
 	return finalContent
+}
+
+// toolResultToTextOpenAI converts KiroTextContent array to a readable text line.
+func toolResultToTextOpenAI(content []KiroTextContent) string {
+	if len(content) == 0 {
+		return ""
+	}
+	parts := make([]string, 0, len(content))
+	for _, c := range content {
+		if c.Text != "" {
+			parts = append(parts, c.Text)
+		}
+	}
+	text := strings.Join(parts, "\n")
+	if text == "" {
+		return ""
+	}
+	return "[Tool result: " + text + "]"
 }
