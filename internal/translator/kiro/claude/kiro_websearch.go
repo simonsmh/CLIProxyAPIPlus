@@ -216,9 +216,6 @@ func GenerateToolUseID() string {
 // ReplaceWebSearchToolDescription replaces the web_search tool description with
 // a minimal version that allows re-search without the restrictive "do not search
 // non-coding topics" instruction from the original Kiro tools/list response.
-// ReplaceWebSearchToolDescription replaces the web_search tool description with
-// a minimal version that allows re-search without the restrictive "do not search
-// non-coding topics" instruction from the original Kiro tools/list response.
 // This keeps the tool available so the model can request additional searches.
 func ReplaceWebSearchToolDescription(body []byte) ([]byte, error) {
 	tools := gjson.GetBytes(body, "tools")

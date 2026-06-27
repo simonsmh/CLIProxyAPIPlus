@@ -128,7 +128,7 @@ func TestSetOIDCHeaders(t *testing.T) {
 
 func TestSetRuntimeHeaders(t *testing.T) {
 	req, _ := http.NewRequest("GET", "http://example.com", nil)
-	setRuntimeHeaders(req, "test-token", "ignored")
+	setRuntimeHeaders(req, "test-token")
 
 	if req.Header.Get("Authorization") != "Bearer test-token" {
 		t.Error("expected Authorization header")

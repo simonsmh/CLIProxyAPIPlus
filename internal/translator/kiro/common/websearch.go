@@ -5,12 +5,6 @@ import (
 	"sync/atomic"
 )
 
-// Q's chat endpoint rejects tool specs named `web_search` — only the
-// separate MCP endpoint accepts that name. The chat endpoint expects
-// `remote_web_search` instead, so all tool specs and history tool_use
-// references must be rewritten before sending.
-const RemoteWebSearchToolName = "remote_web_search"
-
 // remoteWebSearchFallbackDescription is the minimal description we ship
 // when no live description has been fetched from the MCP tools/list
 // endpoint yet. The executor populates the live description via
@@ -44,21 +38,16 @@ func IsWebSearchToolName(name string) bool {
 	return name == "web_search" || strings.HasPrefix(name, "web_search") || strings.HasPrefix(name, "web_fetch")
 }
 
-// RenameWebSearchTool rewrites a tool spec's description to the live MCP description.
-// It preserves the original name instead of renaming to remote_web_search.
-func RenameWebSearchTool(name, description string) (string, string) {
+// UpdateWebSearchToolDescription replaces the description for web_search tools
+// with the live MCP description (or a fallback). Non-web-search tools are
+// returned unchanged. Only the description is ever modified; the name is
+// returned as-is for caller convenience.
+func UpdateWebSearchToolDescription(name, description string) string {
 	if !IsWebSearchToolName(name) {
-		return name, description
+		return description
 	}
 	if cached := GetWebSearchDescription(); cached != "" {
-		description = cached
-	} else {
-		description = remoteWebSearchFallbackDescription
+		return cached
 	}
-	return name, description
-}
-
-// RenameWebSearchToolUse is a no-op that preserves the original tool_use name.
-func RenameWebSearchToolUse(name string) string {
-	return name
+	return remoteWebSearchFallbackDescription
 }

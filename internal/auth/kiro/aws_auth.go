@@ -123,8 +123,7 @@ func (k *KiroAuth) makeRequest(ctx context.Context, path string, tokenData *Kiro
 		return nil, fmt.Errorf("failed to create request: %w", err)
 	}
 
-	accountKey := GetAccountKey(tokenData.ClientID, tokenData.RefreshToken)
-	setRuntimeHeaders(req, tokenData.AccessToken, accountKey)
+	setRuntimeHeaders(req, tokenData.AccessToken)
 
 	resp, err := k.httpClient.Do(req)
 	if err != nil {

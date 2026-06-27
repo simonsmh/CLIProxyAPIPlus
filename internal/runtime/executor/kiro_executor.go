@@ -23,6 +23,7 @@ import (
 	"github.com/google/uuid"
 	kiroauth "github.com/router-for-me/CLIProxyAPI/v7/internal/auth/kiro"
 	"github.com/router-for-me/CLIProxyAPI/v7/internal/config"
+	"github.com/router-for-me/CLIProxyAPI/v7/internal/runtime/executor/helps"
 	kiroclaude "github.com/router-for-me/CLIProxyAPI/v7/internal/translator/kiro/claude"
 	kirocommon "github.com/router-for-me/CLIProxyAPI/v7/internal/translator/kiro/common"
 	kiroopenai "github.com/router-for-me/CLIProxyAPI/v7/internal/translator/kiro/openai"
@@ -501,46 +502,12 @@ func buildKiroPayloadForFormat(body []byte, modelID, profileArn, origin string, 
 
 	// For models that don't support additionalModelRequestFields (e.g. haiku),
 	// strip the field from the payload to avoid 400 errors.
-	if isNonThinkingKiroModel(modelID) {
+	if helps.IsNonThinkingKiroModel(modelID) {
 		log.Debugf("kiro: model %s does not support additionalModelRequestFields, stripping", modelID)
-		payload = stripAdditionalFields(payload)
+		payload = helps.StripAdditionalFields(payload)
 	}
 
 	return payload
-}
-
-// isNonThinkingKiroModel returns true if the model is known to NOT support
-// additionalModelRequestFields (thinking/effort). These models return
-// 400 "additionalModelRequestFields is not supported" if the field is present.
-func isNonThinkingKiroModel(modelID string) bool {
-	normalized := strings.ToLower(modelID)
-	// Haiku does not support thinking/effort
-	if strings.Contains(normalized, "haiku") {
-		return true
-	}
-	// GLM flash model does not support thinking
-	if strings.Contains(normalized, "glm") && strings.Contains(normalized, "flash") {
-		return true
-	}
-	// MiniMax does not support thinking
-	if strings.Contains(normalized, "minimax") {
-		return true
-	}
-	return false
-}
-
-// stripAdditionalFields removes the "additionalModelRequestFields" key from a JSON payload.
-func stripAdditionalFields(payload []byte) []byte {
-	var data map[string]interface{}
-	if err := json.Unmarshal(payload, &data); err != nil {
-		return payload
-	}
-	delete(data, "additionalModelRequestFields")
-	stripped, err := json.Marshal(data)
-	if err != nil {
-		return payload
-	}
-	return stripped
 }
 
 // NewKiroExecutor creates a new Kiro executor instance.
@@ -676,15 +643,15 @@ func (e *KiroExecutor) Execute(ctx context.Context, auth *cliproxyauth.Auth, req
 	if e.isTokenExpired(accessToken) {
 		log.Infof("kiro: access token expired, attempting recovery")
 
-		// 方案 B: 先尝试从文件重新加载 token（后台刷新器可能已更新文件）
+		// Plan B: Try reloading the token from file first (background refresher may have already updated it)
 		reloadedAuth, reloadErr := e.reloadAuthFromFile(auth)
 		if reloadErr == nil && reloadedAuth != nil {
-			// 文件中有更新的 token，使用它
+			// File has a newer token, use it
 			auth = reloadedAuth
 			accessToken, profileArn = kiroCredentials(auth)
 			log.Infof("kiro: recovered token from file (background refresh), expires_at: %v", auth.Metadata["expires_at"])
 		} else {
-			// 文件中的 token 也过期了，执行主动刷新
+			// File token is also expired, perform active refresh
 			log.Debugf("kiro: file reload failed (%v), attempting active refresh", reloadErr)
 			refreshedAuth, refreshErr := e.Refresh(ctx, auth)
 			if refreshErr != nil {
@@ -1052,7 +1019,7 @@ func (e *KiroExecutor) executeWithRetry(ctx context.Context, auth *cliproxyauth.
 			}
 
 			// 3. Update TotalTokens
-			finalizeKiroUsageTotal(&usageInfo)
+			helps.FinalizeKiroUsageTotal(&usageInfo)
 
 			appendAPIResponseChunk(ctx, e.cfg, []byte(content))
 			reporter.publish(ctx, usageInfo)
@@ -1111,15 +1078,15 @@ func (e *KiroExecutor) ExecuteStream(ctx context.Context, auth *cliproxyauth.Aut
 	if e.isTokenExpired(accessToken) {
 		log.Infof("kiro: access token expired, attempting recovery before stream request")
 
-		// 方案 B: 先尝试从文件重新加载 token（后台刷新器可能已更新文件）
+		// Plan B: Try reloading the token from file first (background refresher may have already updated it)
 		reloadedAuth, reloadErr := e.reloadAuthFromFile(auth)
 		if reloadErr == nil && reloadedAuth != nil {
-			// 文件中有更新的 token，使用它
+			// File has a newer token, use it
 			auth = reloadedAuth
 			accessToken, profileArn = kiroCredentials(auth)
 			log.Infof("kiro: recovered token from file (background refresh) for stream, expires_at: %v", auth.Metadata["expires_at"])
 		} else {
-			// 文件中的 token 也过期了，执行主动刷新
+			// File token is also expired, perform active refresh
 			log.Debugf("kiro: file reload failed (%v), attempting active refresh for stream", reloadErr)
 			refreshedAuth, refreshErr := e.Refresh(ctx, auth)
 			if refreshErr != nil {
@@ -1671,140 +1638,6 @@ type eventStreamMessage struct {
 // NOTE: Request building functions moved to internal/translator/kiro/claude/kiro_claude_request.go
 // The executor now uses kiroclaude.BuildKiroPayload() instead
 
-func applyKiroTokenUsage(detail *usage.Detail, tokenUsage map[string]interface{}) bool {
-	if detail == nil || tokenUsage == nil {
-		return false
-	}
-	updated := false
-	if outputTokens, ok := kiroTokenUsageInt64(tokenUsage, "outputTokens"); ok {
-		detail.OutputTokens = outputTokens
-		updated = true
-	}
-	if totalTokens, ok := kiroTokenUsageInt64(tokenUsage, "totalTokens"); ok {
-		detail.TotalTokens = totalTokens
-		updated = true
-	}
-	if uncachedInputTokens, ok := kiroTokenUsageInt64(tokenUsage, "uncachedInputTokens"); ok {
-		detail.InputTokens = uncachedInputTokens
-		updated = true
-	}
-	if cacheReadTokens, ok := kiroTokenUsageInt64(tokenUsage, "cacheReadInputTokens"); ok {
-		detail.CacheReadTokens = cacheReadTokens
-		detail.CachedTokens = cacheReadTokens
-		updated = true
-	}
-	if cacheCreationTokens, ok := kiroTokenUsageInt64(tokenUsage, "cacheWriteInputTokens"); ok {
-		detail.CacheCreationTokens = cacheCreationTokens
-		if detail.CachedTokens == 0 {
-			detail.CachedTokens = cacheCreationTokens
-		}
-		updated = true
-	}
-	return updated
-}
-
-func finalizeKiroUsageTotal(detail *usage.Detail) {
-	if detail == nil || detail.TotalTokens != 0 {
-		return
-	}
-	detail.TotalTokens = detail.InputTokens +
-		detail.OutputTokens +
-		detail.ReasoningTokens +
-		detail.CacheReadTokens +
-		detail.CacheCreationTokens
-}
-
-func applyKiroContextUsageFallback(detail *usage.Detail, contextUsagePercentage float64, hasPreciseTokenUsage bool) (int64, bool) {
-	if detail == nil || contextUsagePercentage <= 0 || hasPreciseTokenUsage {
-		return 0, false
-	}
-	calculatedInputTokens := int64(contextUsagePercentage * 200000 / 100)
-	if calculatedInputTokens <= 0 {
-		return 0, false
-	}
-	detail.InputTokens = calculatedInputTokens
-	finalizeKiroUsageTotal(detail)
-	return calculatedInputTokens, true
-}
-
-func kiroTokenUsageInt64(tokenUsage map[string]interface{}, key string) (int64, bool) {
-	raw, ok := tokenUsage[key]
-	if !ok || raw == nil {
-		return 0, false
-	}
-	switch value := raw.(type) {
-	case int:
-		return int64(value), true
-	case int8:
-		return int64(value), true
-	case int16:
-		return int64(value), true
-	case int32:
-		return int64(value), true
-	case int64:
-		return value, true
-	case uint:
-		return int64(value), true
-	case uint8:
-		return int64(value), true
-	case uint16:
-		return int64(value), true
-	case uint32:
-		return int64(value), true
-	case uint64:
-		return int64(value), true
-	case float32:
-		return int64(value), true
-	case float64:
-		return int64(value), true
-	case json.Number:
-		if n, err := value.Int64(); err == nil {
-			return n, true
-		}
-		if n, err := value.Float64(); err == nil {
-			return int64(n), true
-		}
-	}
-	return 0, false
-}
-
-func kiroTokenUsageFloat64(tokenUsage map[string]interface{}, key string) (float64, bool) {
-	raw, ok := tokenUsage[key]
-	if !ok || raw == nil {
-		return 0, false
-	}
-	switch value := raw.(type) {
-	case int:
-		return float64(value), true
-	case int8:
-		return float64(value), true
-	case int16:
-		return float64(value), true
-	case int32:
-		return float64(value), true
-	case int64:
-		return float64(value), true
-	case uint:
-		return float64(value), true
-	case uint8:
-		return float64(value), true
-	case uint16:
-		return float64(value), true
-	case uint32:
-		return float64(value), true
-	case uint64:
-		return float64(value), true
-	case float32:
-		return float64(value), true
-	case float64:
-		return value, true
-	case json.Number:
-		n, err := value.Float64()
-		return n, err == nil
-	}
-	return 0, false
-}
-
 // parseEventStream parses AWS Event Stream binary format.
 // Extracts text content, tool uses, and stop_reason from the response.
 // Supports embedded [Called ...] tool calls and input buffering for toolUseEvent.
@@ -1995,13 +1828,13 @@ func (e *KiroExecutor) parseEventStream(body io.Reader) (string, []kiroclaude.Ki
 
 			// Check for nested tokenUsage object (official format)
 			if tokenUsage, ok := metadata["tokenUsage"].(map[string]interface{}); ok {
-				if applyKiroTokenUsage(&usageInfo, tokenUsage) {
+				if helps.ApplyKiroTokenUsage(&usageInfo, tokenUsage) {
 					hasPreciseTokenUsage = true
 					log.Infof("kiro: parseEventStream found tokenUsage input=%d cache_read=%d cache_creation=%d output=%d total=%d",
 						usageInfo.InputTokens, usageInfo.CacheReadTokens, usageInfo.CacheCreationTokens, usageInfo.OutputTokens, usageInfo.TotalTokens)
 				}
 				// contextUsagePercentage - can be used as fallback for input token estimation
-				if ctxPct, ok := kiroTokenUsageFloat64(tokenUsage, "contextUsagePercentage"); ok {
+				if ctxPct, ok := helps.KiroTokenUsageFloat64(tokenUsage, "contextUsagePercentage"); ok {
 					upstreamContextPercentage = ctxPct
 					log.Debugf("kiro: parseEventStream found contextUsagePercentage in tokenUsage: %.2f%%", ctxPct)
 				}
@@ -2252,7 +2085,7 @@ func (e *KiroExecutor) parseEventStream(body io.Reader) (string, []kiroclaude.Ki
 	// Kiro model has 200k max context, contextUsagePercentage represents the percentage used
 	// Formula: input_tokens = contextUsagePercentage * 200000 / 100
 	localEstimate := usageInfo.InputTokens
-	if calculatedInputTokens, ok := applyKiroContextUsageFallback(&usageInfo, upstreamContextPercentage, hasPreciseTokenUsage); ok {
+	if calculatedInputTokens, ok := helps.ApplyKiroContextUsageFallback(&usageInfo, upstreamContextPercentage, hasPreciseTokenUsage); ok {
 		log.Infof("kiro: parseEventStream using contextUsagePercentage (%.2f%%) to calculate input tokens: %d (local estimate was: %d)",
 			upstreamContextPercentage, calculatedInputTokens, localEstimate)
 	}
@@ -3307,14 +3140,14 @@ func (e *KiroExecutor) streamToChannel(ctx context.Context, body io.Reader, out 
 
 			// Check for nested tokenUsage object (official format)
 			if tokenUsage, ok := metadata["tokenUsage"].(map[string]interface{}); ok {
-				if applyKiroTokenUsage(&totalUsage, tokenUsage) {
+				if helps.ApplyKiroTokenUsage(&totalUsage, tokenUsage) {
 					hasPreciseTokenUsage = true
 					hasUpstreamUsage = true
 					log.Infof("kiro: streamToChannel found tokenUsage input=%d cache_read=%d cache_creation=%d output=%d total=%d",
 						totalUsage.InputTokens, totalUsage.CacheReadTokens, totalUsage.CacheCreationTokens, totalUsage.OutputTokens, totalUsage.TotalTokens)
 				}
 				// contextUsagePercentage - can be used as fallback for input token estimation
-				if ctxPct, ok := kiroTokenUsageFloat64(tokenUsage, "contextUsagePercentage"); ok {
+				if ctxPct, ok := helps.KiroTokenUsageFloat64(tokenUsage, "contextUsagePercentage"); ok {
 					upstreamContextPercentage = ctxPct
 					log.Debugf("kiro: streamToChannel found contextUsagePercentage in tokenUsage: %.2f%%", ctxPct)
 				}
@@ -3528,12 +3361,12 @@ func (e *KiroExecutor) streamToChannel(ctx context.Context, body io.Reader, out 
 	// Formula: input_tokens = contextUsagePercentage * 200000 / 100
 	// Note: The effective input context is ~170k (200k - 30k reserved for output)
 	localEstimate := totalUsage.InputTokens
-	if calculatedInputTokens, ok := applyKiroContextUsageFallback(&totalUsage, upstreamContextPercentage, hasPreciseTokenUsage); ok {
+	if calculatedInputTokens, ok := helps.ApplyKiroContextUsageFallback(&totalUsage, upstreamContextPercentage, hasPreciseTokenUsage); ok {
 		log.Debugf("kiro: using contextUsagePercentage (%.2f%%) to calculate input tokens: %d (local estimate was: %d)",
 			upstreamContextPercentage, calculatedInputTokens, localEstimate)
 	}
 
-	finalizeKiroUsageTotal(&totalUsage)
+	helps.FinalizeKiroUsageTotal(&totalUsage)
 
 	// Log upstream usage information if received
 	if hasUpstreamUsage {
@@ -3879,15 +3712,16 @@ func (e *KiroExecutor) fetchAndSaveProfileArn(ctx context.Context, auth *cliprox
 	return profileArn
 }
 
-// reloadAuthFromFile 从文件重新加载 auth 数据（方案 B: Fallback 机制）
-// 当内存中的 token 已过期时，尝试从文件读取最新的 token
-// 这解决了后台刷新器已更新文件但内存中 Auth 对象尚未同步的时间差问题
+// reloadAuthFromFile reloads auth data from disk (Plan B: fallback mechanism).
+// When the in-memory token is expired, it reads the latest token from file.
+// This closes the race window where the background refresher has already
+// written the file but the in-memory Auth object hasn't been synced yet.
 func (e *KiroExecutor) reloadAuthFromFile(auth *cliproxyauth.Auth) (*cliproxyauth.Auth, error) {
 	if auth == nil {
 		return nil, fmt.Errorf("kiro executor: cannot reload nil auth")
 	}
 
-	// 确定文件路径
+	// Determine file path
 	var authPath string
 	if auth.Attributes != nil {
 		if p := strings.TrimSpace(auth.Attributes["path"]); p != "" {
@@ -3908,34 +3742,34 @@ func (e *KiroExecutor) reloadAuthFromFile(auth *cliproxyauth.Auth) (*cliproxyaut
 		}
 	}
 
-	// 读取文件
+	// Read file
 	raw, err := os.ReadFile(authPath)
 	if err != nil {
 		return nil, fmt.Errorf("kiro executor: failed to read auth file %s: %w", authPath, err)
 	}
 
-	// 解析 JSON
+	// Parse JSON
 	var metadata map[string]any
 	if err := json.Unmarshal(raw, &metadata); err != nil {
 		return nil, fmt.Errorf("kiro executor: failed to parse auth file %s: %w", authPath, err)
 	}
 
-	// 检查文件中的 token 是否比内存中的更新
+	// Check if file token is newer than in-memory token
 	fileExpiresAt, _ := metadata["expires_at"].(string)
 	fileAccessToken, _ := metadata["access_token"].(string)
 	memExpiresAt, _ := auth.Metadata["expires_at"].(string)
 	memAccessToken, _ := auth.Metadata["access_token"].(string)
 
-	// 文件中必须有有效的 access_token
+	// File must contain a valid access_token
 	if fileAccessToken == "" {
 		return nil, fmt.Errorf("kiro executor: auth file has no access_token field")
 	}
 
-	// 如果有 expires_at，检查是否过期
+	// If expires_at is present, check if it is expired
 	if fileExpiresAt != "" {
 		fileExpTime, parseErr := time.Parse(time.RFC3339, fileExpiresAt)
 		if parseErr == nil {
-			// 如果文件中的 token 也已过期，不使用它
+			// If file token is also expired, do not use it
 			if time.Now().After(fileExpTime) {
 				log.Debugf("kiro executor: file token also expired at %s, not using", fileExpiresAt)
 				return nil, fmt.Errorf("kiro executor: file token also expired")
@@ -3943,18 +3777,18 @@ func (e *KiroExecutor) reloadAuthFromFile(auth *cliproxyauth.Auth) (*cliproxyaut
 		}
 	}
 
-	// 判断文件中的 token 是否比内存中的更新
-	// 条件1: access_token 不同（说明已刷新）
-	// 条件2: expires_at 更新（说明已刷新）
+	// Determine if file token is newer than in-memory token.
+	// Condition 1: access_token differs (indicates refresh happened)
+	// Condition 2: expires_at is newer (indicates refresh happened)
 	isNewer := false
 
-	// 优先检查 access_token 是否变化
+	// Check if access_token has changed first
 	if fileAccessToken != memAccessToken {
 		isNewer = true
 		log.Debugf("kiro executor: file access_token differs from memory, using file token")
 	}
 
-	// 如果 access_token 相同，检查 expires_at
+	// If access_token is the same, check expires_at
 	if !isNewer && fileExpiresAt != "" && memExpiresAt != "" {
 		fileExpTime, fileParseErr := time.Parse(time.RFC3339, fileExpiresAt)
 		memExpTime, memParseErr := time.Parse(time.RFC3339, memExpiresAt)
@@ -3964,7 +3798,7 @@ func (e *KiroExecutor) reloadAuthFromFile(auth *cliproxyauth.Auth) (*cliproxyaut
 		}
 	}
 
-	// 如果文件中没有 expires_at 但 access_token 相同，无法判断是否更新
+	// Cannot determine if newer when file has no expires_at and access_token is the same
 	if !isNewer && fileExpiresAt == "" && fileAccessToken == memAccessToken {
 		return nil, fmt.Errorf("kiro executor: cannot determine if file token is newer (no expires_at, same access_token)")
 	}
@@ -3974,12 +3808,12 @@ func (e *KiroExecutor) reloadAuthFromFile(auth *cliproxyauth.Auth) (*cliproxyaut
 		return nil, fmt.Errorf("kiro executor: file token not newer")
 	}
 
-	// 创建更新后的 auth 对象
+	// Create updated auth object
 	updated := auth.Clone()
 	updated.Metadata = metadata
 	updated.UpdatedAt = time.Now()
 
-	// 同步更新 Attributes
+	// Sync updated Attributes
 	if updated.Attributes == nil {
 		updated.Attributes = make(map[string]string)
 	}

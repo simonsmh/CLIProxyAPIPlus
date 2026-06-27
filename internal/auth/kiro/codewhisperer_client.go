@@ -83,8 +83,7 @@ func (c *CodeWhispererClient) GetUsageLimits(ctx context.Context, accessToken, c
 		return nil, fmt.Errorf("failed to create request: %w", err)
 	}
 
-	accountKey := GetAccountKey(clientID, refreshToken)
-	setRuntimeHeaders(req, accessToken, accountKey)
+	setRuntimeHeaders(req, accessToken)
 
 	log.Debugf("codewhisperer: GET %s", url)
 

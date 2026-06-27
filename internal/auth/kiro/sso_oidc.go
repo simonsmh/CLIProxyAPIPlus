@@ -967,8 +967,7 @@ func (c *SSOOIDCClient) tryListAvailableProfiles(ctx context.Context, accessToke
 	}
 
 	req.Header.Set("Content-Type", "application/json")
-	accountKey := GetAccountKey(clientID, refreshToken)
-	setRuntimeHeaders(req, accessToken, accountKey)
+	setRuntimeHeaders(req, accessToken)
 
 	resp, err := c.httpClient.Do(req)
 	if err != nil {

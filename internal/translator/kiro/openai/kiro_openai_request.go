@@ -127,58 +127,8 @@ func BuildKiroPayloadFromOpenAI(openaiBody []byte, modelID, profileArn, origin s
 	// Extract thinking config only from the request body
 	config := thinking.ExtractThinkingConfigPublic(openaiBody, "openai")
 
-	// Build additionalModelRequestFields if target model is not "auto"
-	// Skip when no thinking config was specified (default ThinkingConfig{} has Mode=Budget, Budget=0)
-	var additionalFields *KiroAdditionalModelRequestFields
-	hasThinkingConfig := config.Mode != thinking.ModeBudget || config.Budget != 0 || config.Level != ""
-	if modelID != "auto" && hasThinkingConfig {
-		if config.Mode == thinking.ModeLevel && config.Level != "" {
-			levelStr := strings.ToLower(strings.TrimSpace(string(config.Level)))
-			if levelStr == "minimal" {
-				levelStr = "low"
-			}
-			if levelStr == "auto" {
-				additionalFields = &KiroAdditionalModelRequestFields{
-					Thinking: &KiroThinkingConfig{Type: "adaptive"},
-				}
-			} else if levelStr == "none" {
-				additionalFields = &KiroAdditionalModelRequestFields{
-					Thinking: &KiroThinkingConfig{Type: "disabled"},
-				}
-			} else if levelStr == "low" || levelStr == "medium" || levelStr == "high" || levelStr == "xhigh" || levelStr == "max" {
-				additionalFields = &KiroAdditionalModelRequestFields{
-					Thinking:     &KiroThinkingConfig{Type: "adaptive"},
-					OutputConfig: &KiroOutputConfig{Effort: levelStr},
-				}
-			}
-		} else if config.Mode == thinking.ModeBudget {
-			levelStr, ok := thinking.ConvertBudgetToLevel(config.Budget)
-			if ok {
-				levelStr = strings.ToLower(strings.TrimSpace(levelStr))
-				if levelStr == "minimal" {
-					levelStr = "low"
-				}
-				if levelStr == "none" {
-					additionalFields = &KiroAdditionalModelRequestFields{
-						Thinking: &KiroThinkingConfig{Type: "disabled"},
-					}
-				} else if levelStr == "low" || levelStr == "medium" || levelStr == "high" || levelStr == "xhigh" || levelStr == "max" {
-					additionalFields = &KiroAdditionalModelRequestFields{
-						Thinking:     &KiroThinkingConfig{Type: "adaptive"},
-						OutputConfig: &KiroOutputConfig{Effort: levelStr},
-					}
-				}
-			}
-		} else if config.Mode == thinking.ModeNone {
-			additionalFields = &KiroAdditionalModelRequestFields{
-				Thinking: &KiroThinkingConfig{Type: "disabled"},
-			}
-		} else if config.Mode == thinking.ModeAuto {
-			additionalFields = &KiroAdditionalModelRequestFields{
-				Thinking: &KiroThinkingConfig{Type: "adaptive"},
-			}
-		}
-	}
+	// Build additionalModelRequestFields from thinking config
+	additionalFields := kirocommon.BuildKiroThinkingConfig(config, modelID)
 
 	payload := KiroPayload{
 		ConversationState: KiroConversationState{
@@ -294,12 +244,8 @@ func convertOpenAIToolsToKiro(tools gjson.Result) []KiroToolWrapper {
 			log.Debugf("kiro-openai: tool '%s' has empty description, using default: %s", name, description)
 		}
 
-		// Rewrite web_search to the name Q's chat endpoint accepts
-		// (and use the live MCP description if we have one).
-		if newName, newDesc := kirocommon.RenameWebSearchTool(name, description); newName != name {
-			name, description = newName, newDesc
-			log.Debugf("kiro-openai: renamed tool web_search → %s", name)
-		}
+		// Update web_search tool description with the live MCP description
+		description = kirocommon.UpdateWebSearchToolDescription(name, description)
 
 		// Truncate long descriptions
 		if len(description) > kirocommon.KiroMaxToolDescLen {
@@ -653,7 +599,7 @@ func buildAssistantMessageFromOpenAI(msg gjson.Result) KiroAssistantResponseMess
 
 				toolUses = append(toolUses, KiroToolUse{
 					ToolUseID: toolUseID,
-					Name:      kirocommon.RenameWebSearchToolUse(toolName),
+					Name:      toolName,
 					Input:     inputMap,
 				})
 				log.Debugf("kiro-openai: extracted tool_use from content array: %s", toolName)
@@ -683,7 +629,7 @@ func buildAssistantMessageFromOpenAI(msg gjson.Result) KiroAssistantResponseMess
 
 			toolUses = append(toolUses, KiroToolUse{
 				ToolUseID: toolUseID,
-				Name:      kirocommon.RenameWebSearchToolUse(toolName),
+				Name:      toolName,
 				Input:     inputMap,
 			})
 		}

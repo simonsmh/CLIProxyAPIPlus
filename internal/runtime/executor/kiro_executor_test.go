@@ -5,6 +5,7 @@ import (
 	"testing"
 
 	kiroauth "github.com/router-for-me/CLIProxyAPI/v7/internal/auth/kiro"
+	"github.com/router-for-me/CLIProxyAPI/v7/internal/runtime/executor/helps"
 	cliproxyauth "github.com/router-for-me/CLIProxyAPI/v7/sdk/cliproxy/auth"
 	"github.com/router-for-me/CLIProxyAPI/v7/sdk/cliproxy/usage"
 )
@@ -515,7 +516,7 @@ func TestMapModelToKiro_MapsClaudeOpus47Variants(t *testing.T) {
 
 func TestApplyKiroTokenUsagePreservesCacheTokenBreakdown(t *testing.T) {
 	detail := usage.Detail{}
-	ok := applyKiroTokenUsage(&detail, map[string]interface{}{
+	ok := helps.ApplyKiroTokenUsage(&detail, map[string]interface{}{
 		"uncachedInputTokens":   float64(290),
 		"outputTokens":          float64(1),
 		"totalTokens":           float64(4130),
@@ -523,7 +524,7 @@ func TestApplyKiroTokenUsagePreservesCacheTokenBreakdown(t *testing.T) {
 		"cacheWriteInputTokens": float64(17),
 	})
 	if !ok {
-		t.Fatal("applyKiroTokenUsage() = false, want true")
+		t.Fatal("helps.ApplyKiroTokenUsage() = false, want true")
 	}
 	if detail.InputTokens != 290 {
 		t.Fatalf("InputTokens = %d, want 290", detail.InputTokens)
@@ -552,7 +553,7 @@ func TestFinalizeKiroUsageTotalIncludesCacheTokensWhenUpstreamTotalMissing(t *te
 		CacheReadTokens:     3822,
 		CacheCreationTokens: 17,
 	}
-	finalizeKiroUsageTotal(&detail)
+	helps.FinalizeKiroUsageTotal(&detail)
 	if detail.TotalTokens != 4130 {
 		t.Fatalf("TotalTokens = %d, want 4130", detail.TotalTokens)
 	}
@@ -560,7 +561,7 @@ func TestFinalizeKiroUsageTotalIncludesCacheTokensWhenUpstreamTotalMissing(t *te
 
 func TestKiroContextUsageFallbackDoesNotOverwritePreciseTokenUsage(t *testing.T) {
 	detail := usage.Detail{}
-	hasPreciseTokenUsage := applyKiroTokenUsage(&detail, map[string]interface{}{
+	hasPreciseTokenUsage := helps.ApplyKiroTokenUsage(&detail, map[string]interface{}{
 		"uncachedInputTokens":    float64(290),
 		"outputTokens":           float64(1),
 		"totalTokens":            float64(4130),
@@ -569,10 +570,10 @@ func TestKiroContextUsageFallbackDoesNotOverwritePreciseTokenUsage(t *testing.T)
 		"contextUsagePercentage": float64(50),
 	})
 	if !hasPreciseTokenUsage {
-		t.Fatal("applyKiroTokenUsage() = false, want true")
+		t.Fatal("helps.ApplyKiroTokenUsage() = false, want true")
 	}
-	if _, applied := applyKiroContextUsageFallback(&detail, 50, hasPreciseTokenUsage); applied {
-		t.Fatal("applyKiroContextUsageFallback() applied despite precise token usage")
+	if _, applied := helps.ApplyKiroContextUsageFallback(&detail, 50, hasPreciseTokenUsage); applied {
+		t.Fatal("helps.ApplyKiroContextUsageFallback() applied despite precise token usage")
 	}
 	if detail.InputTokens != 290 {
 		t.Fatalf("InputTokens = %d, want precise uncached value 290", detail.InputTokens)
@@ -584,9 +585,9 @@ func TestKiroContextUsageFallbackDoesNotOverwritePreciseTokenUsage(t *testing.T)
 
 func TestKiroContextUsageFallbackAppliesWhenPreciseTokenUsageMissing(t *testing.T) {
 	detail := usage.Detail{OutputTokens: 3}
-	calculated, applied := applyKiroContextUsageFallback(&detail, 50, false)
+	calculated, applied := helps.ApplyKiroContextUsageFallback(&detail, 50, false)
 	if !applied {
-		t.Fatal("applyKiroContextUsageFallback() applied = false, want true")
+		t.Fatal("helps.ApplyKiroContextUsageFallback() applied = false, want true")
 	}
 	if calculated != 100000 {
 		t.Fatalf("calculated input tokens = %d, want 100000", calculated)
@@ -596,5 +597,68 @@ func TestKiroContextUsageFallbackAppliesWhenPreciseTokenUsageMissing(t *testing.
 	}
 	if detail.TotalTokens != 100003 {
 		t.Fatalf("TotalTokens = %d, want 100003", detail.TotalTokens)
+	}
+}
+
+func TestGetEffectiveProfileArnWithWarning(t *testing.T) {
+	tests := []struct {
+		name       string
+		auth       *cliproxyauth.Auth
+		profileArn string
+		expected   string
+	}{
+		{
+			name:       "existing profileArn returned as-is",
+			auth:       nil,
+			profileArn: "arn:aws:codewhisperer:us-east-1:123:profile/ABC",
+			expected:   "arn:aws:codewhisperer:us-east-1:123:profile/ABC",
+		},
+		{
+			name: "builder-id fallback uses DefaultBuilderIDProfileArn",
+			auth: &cliproxyauth.Auth{
+				Metadata: map[string]any{"auth_method": "builder-id"},
+			},
+			profileArn: "",
+			expected:   kiroauth.DefaultBuilderIDProfileArn,
+		},
+		{
+			name: "idc fallback uses DefaultBuilderIDProfileArn",
+			auth: &cliproxyauth.Auth{
+				Metadata: map[string]any{"auth_method": "idc"},
+			},
+			profileArn: "",
+			expected:   kiroauth.DefaultBuilderIDProfileArn,
+		},
+		{
+			name: "aws_sso_oidc auth_type fallback uses DefaultBuilderIDProfileArn",
+			auth: &cliproxyauth.Auth{
+				Metadata: map[string]any{"auth_type": "aws_sso_oidc"},
+			},
+			profileArn: "",
+			expected:   kiroauth.DefaultBuilderIDProfileArn,
+		},
+		{
+			name:       "no auth and no profileArn returns empty",
+			auth:       nil,
+			profileArn: "",
+			expected:   "",
+		},
+		{
+			name: "unknown auth method with no profileArn returns empty",
+			auth: &cliproxyauth.Auth{
+				Metadata: map[string]any{"auth_method": "social"},
+			},
+			profileArn: "",
+			expected:   "",
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			result := getEffectiveProfileArnWithWarning(tt.auth, tt.profileArn)
+			if result != tt.expected {
+				t.Errorf("getEffectiveProfileArnWithWarning() = %q, want %q", result, tt.expected)
+			}
+		})
 	}
 }

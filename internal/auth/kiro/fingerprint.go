@@ -82,7 +82,7 @@ func SetOIDCHeaders(req *http.Request) {
 // setRuntimeHeaders sets headers for Kiro management API requests
 // (GetProfile, ListAvailableModels, GetUsageLimits).
 // Uses codewhispererruntime API with metrics "F,C".
-func setRuntimeHeaders(req *http.Request, accessToken string, _ string) {
+func setRuntimeHeaders(req *http.Request, accessToken string) {
 	ua, amzUA := kiroUserAgent(ApiRuntime, "F,C")
 	req.Header.Set("Authorization", "Bearer "+accessToken)
 	req.Header.Set("User-Agent", ua)

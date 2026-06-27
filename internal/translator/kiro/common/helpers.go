@@ -4,6 +4,7 @@ import (
 	"fmt"
 	"strings"
 
+	"github.com/router-for-me/CLIProxyAPI/v7/internal/thinking"
 	log "github.com/sirupsen/logrus"
 	"github.com/tidwall/gjson"
 )
@@ -137,4 +138,66 @@ func SynthesizeToolSpecsFromHistory(history []KiroHistoryMessage) []KiroToolWrap
 		}
 	}
 	return stubs
+}
+
+// BuildKiroThinkingConfig converts a canonical thinking.ThinkingConfig into
+// the Kiro-specific additionalModelRequestFields payload. Returns nil when no
+// thinking configuration was requested or when modelID is "auto".
+//
+// Shared by both the Claude and OpenAI request translators to avoid
+// duplicating the mapping logic.
+func BuildKiroThinkingConfig(config thinking.ThinkingConfig, modelID string) *KiroAdditionalModelRequestFields {
+	hasThinkingConfig := config.Mode != thinking.ModeBudget || config.Budget != 0 || config.Level != ""
+	if modelID == "auto" || !hasThinkingConfig {
+		return nil
+	}
+
+	switch {
+	case config.Mode == thinking.ModeLevel && config.Level != "":
+		return buildFromLevel(strings.ToLower(strings.TrimSpace(string(config.Level))))
+
+	case config.Mode == thinking.ModeBudget:
+		levelStr, ok := thinking.ConvertBudgetToLevel(config.Budget)
+		if !ok {
+			return nil
+		}
+		return buildFromLevel(strings.ToLower(strings.TrimSpace(levelStr)))
+
+	case config.Mode == thinking.ModeNone:
+		return &KiroAdditionalModelRequestFields{
+			Thinking: &KiroThinkingConfig{Type: "disabled"},
+		}
+
+	case config.Mode == thinking.ModeAuto:
+		return &KiroAdditionalModelRequestFields{
+			Thinking: &KiroThinkingConfig{Type: "adaptive"},
+		}
+
+	default:
+		return nil
+	}
+}
+
+// buildFromLevel maps a normalised effort level string to Kiro fields.
+func buildFromLevel(levelStr string) *KiroAdditionalModelRequestFields {
+	if levelStr == "minimal" {
+		levelStr = "low"
+	}
+	switch levelStr {
+	case "auto":
+		return &KiroAdditionalModelRequestFields{
+			Thinking: &KiroThinkingConfig{Type: "adaptive"},
+		}
+	case "none":
+		return &KiroAdditionalModelRequestFields{
+			Thinking: &KiroThinkingConfig{Type: "disabled"},
+		}
+	case "low", "medium", "high", "xhigh", "max":
+		return &KiroAdditionalModelRequestFields{
+			Thinking:     &KiroThinkingConfig{Type: "adaptive"},
+			OutputConfig: &KiroOutputConfig{Effort: levelStr},
+		}
+	default:
+		return nil
+	}
 }

@@ -91,8 +91,7 @@ func (c *UsageChecker) CheckUsage(ctx context.Context, tokenData *KiroTokenData)
 		return nil, fmt.Errorf("failed to create request: %w", err)
 	}
 
-	accountKey := GetAccountKey(tokenData.ClientID, tokenData.RefreshToken)
-	setRuntimeHeaders(req, tokenData.AccessToken, accountKey)
+	setRuntimeHeaders(req, tokenData.AccessToken)
 
 	resp, err := c.httpClient.Do(req)
 	if err != nil {
