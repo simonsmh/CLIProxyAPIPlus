@@ -128,8 +128,10 @@ func BuildKiroPayloadFromOpenAI(openaiBody []byte, modelID, profileArn, origin s
 	config := thinking.ExtractThinkingConfigPublic(openaiBody, "openai")
 
 	// Build additionalModelRequestFields if target model is not "auto"
+	// Skip when no thinking config was specified (default ThinkingConfig{} has Mode=Budget, Budget=0)
 	var additionalFields *KiroAdditionalModelRequestFields
-	if modelID != "auto" {
+	hasThinkingConfig := config.Mode != thinking.ModeBudget || config.Budget != 0 || config.Level != ""
+	if modelID != "auto" && hasThinkingConfig {
 		if config.Mode == thinking.ModeLevel && config.Level != "" {
 			levelStr := strings.ToLower(strings.TrimSpace(string(config.Level)))
 			if levelStr == "minimal" {
